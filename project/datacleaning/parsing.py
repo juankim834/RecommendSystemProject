@@ -53,18 +53,16 @@ ratings['label'] = ratings['rating'].apply(lambda x: 1 if x >= Threshold else 0)
 # Sorting data
 
 ratings = ratings.sort_values(by=['user_id', 'timestamp'])
-# Make indicators
+# Generate rank indicator
 ratings['rank_latest'] = ratings.groupby(['user_id'])['timestamp'].rank(method='first', ascending=False)
 
 train = ratings[ratings['rank_latest'] > 2]
 val = ratings[ratings['rank_latest'] == 2]
 test = ratings[ratings['rank_latest'] == 1]
 
-print(f"Train shape: {train.shape}")
-print(f"Val shape: {val.shape}")
-print(f"Test shape: {test.shape}")
-
 ratings.to_csv("./data/df_ratings.csv")
+movies.to_csv("./data/df_movie.csv")
+users.to_csv("./data/df_users.csv")
 
 train.to_csv("./data/cleaned/df_train.csv", index=False)
 val.to_csv("./data/cleaned/df_val.csv", index=False)
