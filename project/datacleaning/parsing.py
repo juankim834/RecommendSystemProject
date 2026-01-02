@@ -32,9 +32,6 @@ ratings = pd.read_csv(
 # Release year from movie title
 movies['release_year'] = movies['title'].str.extract(r'\((\d{4})\)').astype(int)
 
-# Get main genre
-movies['main_genre'] = movies['genres'].str.split('|').str[0]
-
 # Filtering users who have less than 20 history and movies which have less than 5 history
 movie_counts = ratings['movie_id'].value_counts()
 valid_movie_ids = movie_counts[movie_counts >= 5].index
@@ -47,7 +44,35 @@ ratings = ratings[ratings['user_id'].isin(valid_user_ids)].copy()
 movies = movies[movies['movie_id'].isin(valid_movie_ids)].copy()
 users = users[users['user_id'].isin(valid_user_ids)].copy()
 
+# Get first three number of zipcode
+users['zip_prefix'] = users['zip'].astype(str).str[:3]
+# Encoding zipcode prefix
+lbe_zip = LabelEncoder()
+users['zip_enc'] = lbe_zip.fit_transform(users['zip_prefix']) + 1
 
+lbe_occ = LabelEncoder()
+users['occupation_enc'] = lbe_occ.fit_transform(users['occupation']) + 1
+
+# Gender data processing
+lbe_gender = LabelEncoder()
+users['gender_enc'] = lbe_gender.fit_transform(users['gender'])
+# 0:Female, 1:Male, or otherwise, depend on sequence of fit
+
+# Age group processing
+lbe_age = LabelEncoder()
+users['age_enc'] = lbe_age.fit_transform(users['age']) + 1
+
+# Merge data into ratings
+ratings = ratings.merge(
+    users[['user_id', 'gender_enc', 'age_enc', 'occupation_enc', 'zip_enc']], 
+    on='user_id', 
+    how='left'
+)
+ratings = ratings.merge(
+    movies[['movie_id', 'release_year']], 
+    on='movie_id',
+    how='left'
+)
 
 # Label Encoding
 # Mapping the incontinuous ids into continuous
@@ -84,14 +109,27 @@ padded_movie_genre_dict = {k: get_padded_genres(v) for k, v in movie_genre_dict.
 
 # Time features processing
 ratings['timestamp_dt'] = pd.to_datetime(ratings['timestamp'], unit='s')
-ratings['hour'] = ratings['timestamp_dt'].dt.hour / 24.0
-ratings['weekday'] = ratings['timestamp_dt'].dt.weekday / 6.0
+ratings['rating_hour'] = ratings['timestamp_dt'].dt.hour / 24.0
+ratings['rating_weekday'] = ratings['timestamp_dt'].dt.weekday / 6.0
+ratings['rating_month'] = ratings['timestamp_dt'].dt.month.astype(int)
+ratings['rating_year'] = ratings['timestamp_dt'].dt.year
+
+# Label Encoding for Year
+lbe_year = LabelEncoder()
+ratings['year_enc'] = lbe_year.fit_transform(ratings['rating_year'])
+
+# Calculate time lag features(Rating comment year - Movie release year)
+ratings['time_lag'] = ratings['rating_year'] - ratings['release_year']
+ratings['time_lag'] = ratings['time_lag'].clip(lower=0)
+ratings['time_lag_norm'] = np.log1p(ratings['time_lag'])
+
 ratings = ratings.sort_values(by=['user_id_enc', 'timestamp']).reset_index(drop=False)
 
 from tqdm import tqdm
 tqdm.pandas()
 
-def generate_history(group):
+# Generate user's past 20 movies id list before this rating comment
+def generate_history_movies(group):
     # Group: All the movement of a user
     movie_id_list = group['movie_id_enc'].tolist()
     hist_movie = []
@@ -110,9 +148,23 @@ def generate_history(group):
     group['hist_movie_ids'] = hist_movie
     return group
 
-print("Generating sequence features...")
+print("Generating history movies features...")
 
-ratings = ratings.groupby('user_id_enc', as_index=False).progress_apply(generate_history)
+ratings = ratings.groupby('user_id_enc', as_index=False).progress_apply(generate_history_movies)
+
+padded_movie_genre_dict[0] = [0, 0, 0]
+
+# Generate user's past 20 movies' genres id list before this rating comment
+def convert_hist_movies_to_genres(movie_id_list):
+    genre_list = []
+    for movie_id in movie_id_list:
+        genres = padded_movie_genre_dict.get(movie_id, [0, 0, 0])
+        genre_list.extend(genres)
+    return genre_list
+
+print("Generating history genre features...")
+ratings['hist_genre_ids'] = ratings['hist_movie_ids'].progress_apply(convert_hist_movies_to_genres)
+
 
 # Merge all the features into Ratings list
 ratings['target_genre_ids'] = ratings['movie_id_enc'].map(padded_movie_genre_dict)
@@ -129,6 +181,49 @@ train = ratings[ratings['rank_latest'] > 2]
 val = ratings[ratings['rank_latest'] == 2]
 test = ratings[ratings['rank_latest'] == 1]
 
+print("Calculate statistics features...")
+
+# User Activity
+train_user_activity = train['user_id_enc'].value_counts()
+# Movie Popularity
+train_movie_pop = train['movie_id_enc'].value_counts()
+# Movie Avg Rating
+train_movie_avg_rate = train.groupby('movie_id_enc')['rating'].mean()
+
+# Global statistics(Use to cold startup or unknown data)
+global_avg_rating = train['rating'].mean()
+
+def add_stat_features(df):
+    df_out = df.copy()
+
+    # Mapping User Activity
+    df_out['user_activity'] = df_out['user_id_enc'].map(train_user_activity).fillna(0)
+    
+    # Mapping Movie Popularity
+    df_out['movie_pop'] = df_out['movie_id_enc'].map(train_movie_pop).fillna(0)
+
+    # Mapping Movie Avg Rating
+    df_out['movie_avg_rate'] = df_out['movie_id_enc'].map(train_movie_avg_rate).fillna(0)
+
+    # Log normalization
+    df_out['user_activity_log'] = np.log1p(df_out['user_activity'])
+    df_out['movie_pop_log'] = np.log1p(df_out['movie_pop'])
+    df_out['movie_avg_rate_log'] = np.log1p(df_out['movie_avg_rate'])
+    
+    return df_out
+
+print("Applying features to Train/Val/Test...")
+train = add_stat_features(train)
+val = add_stat_features(val)
+test = add_stat_features(val)
+
+print("Check Train samples:")
+print(train[['user_id_enc', 'user_activity_log', 'movie_pop_log', 'movie_avg_rate_log']].head())
+
+print("\nCheck Test samples (Verification):")
+print(test[['user_activity_log', 'movie_pop_log']].isna().sum())
+
+
 train.to_pickle("./data/cleaned/train_set.pkl")
 val.to_pickle("./data/cleaned/val_set.pkl")
 test.to_pickle("./data/cleaned/test_set.pkl")
@@ -138,6 +233,11 @@ with open("./data/cleaned/encoders.pkl", "wb") as f:
     pickle.dump({
         'user_encoder': lbe_user, 
         'movie_encoder': lbe_movie,
+        'zip_encoder': lbe_zip,
+        'gender_encoder': lbe_gender,
+        'age_encoder': lbe_age,
+        'occupation_encoder': lbe_occ,
+        'year_encoder': lbe_year,
         'genre_map': padded_movie_genre_dict,
         'genre_vocab_size': len(genre2int) + 1
     }, f)
