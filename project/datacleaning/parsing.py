@@ -27,18 +27,45 @@ ratings = pd.read_csv(
 )
 
 # Release year from movie title
-movies['release_year'] = movies['title'].str.extract(r'\((\d{4})\)').astypr(int)
+movies['release_year'] = movies['title'].str.extract(r'\((\d{4})\)').astype(int)
 
 # Get main genre
 movies['main_genre'] = movies['genres'].str.split('|').str[0]
 
 # Filtering users who have less than 20 history and movies which have less than 5 history
-counts_movies = movies.value_counts('movie_id')
-movies = movies[counts_movies > 5].index.tolist()
+movie_counts = ratings['movie_id'].value_counts()
+valid_movie_ids = movie_counts[movie_counts >= 5].index
+ratings = ratings[ratings['movie_id'].isin(valid_movie_ids)]
 
-counts_users = users.value_counts('user_id')
-users = users[counts_users > 5]
+user_counts = ratings['user_id'].value_counts()
+valid_user_ids = user_counts[user_counts >= 20].index
+ratings = ratings[ratings['user_id'].isin(valid_user_ids)]
 
+movies = movies[movies['movie_id'].isin(valid_movie_ids)]
+users = users[users['user_id'].isin(valid_user_ids)]
 
+# Label Generating
 
+Threshold = 4
+ratings['label'] = ratings['rating'].apply(lambda x: 1 if x >= Threshold else 0)
 
+# Spliting train test sets. 
+# Sorting data
+
+ratings = ratings.sort_values(by=['user_id', 'timestamp'])
+# Make indicators
+ratings['rank_latest'] = ratings.groupby(['user_id'])['timestamp'].rank(method='first', ascending=False)
+
+train = ratings[ratings['rank_latest'] > 2]
+val = ratings[ratings['rank_latest'] == 2]
+test = ratings[ratings['rank_latest'] == 1]
+
+print(f"Train shape: {train.shape}")
+print(f"Val shape: {val.shape}")
+print(f"Test shape: {test.shape}")
+
+ratings.to_csv("./data/df_ratings.csv")
+
+train.to_csv("./data/cleaned/df_train.csv", index=False)
+val.to_csv("./data/cleaned/df_val.csv", index=False)
+test.to_csv("./data/cleaned/df_test.csv", index=False)
