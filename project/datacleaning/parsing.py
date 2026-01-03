@@ -209,13 +209,13 @@ def add_stat_features(df):
     df_out['user_activity_log'] = np.log1p(df_out['user_activity'])
     df_out['movie_pop_log'] = np.log1p(df_out['movie_pop'])
     df_out['movie_avg_rate_log'] = np.log1p(df_out['movie_avg_rate'])
-    
+
     return df_out
 
 print("Applying features to Train/Val/Test...")
 train = add_stat_features(train)
 val = add_stat_features(val)
-test = add_stat_features(val)
+test = add_stat_features(test)
 
 print("Check Train samples:")
 print(train[['user_id_enc', 'user_activity_log', 'movie_pop_log', 'movie_avg_rate_log']].head())
