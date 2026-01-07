@@ -7,6 +7,7 @@ class MLP_Tower(nn.Module):
     MLP's General Structure: Embedding -> MLP -> Normalize
     """
     def __init__(self, input_dim, hidden_dims, output_dim, dropout=0.1):
+        
         super().__init__()
         layers = []
         curr_dim = input_dim
@@ -52,13 +53,15 @@ class SequenceEncoder(nn.Module):
         # attn_output: [batch, 20, emb_dim]
         attn_output, _ = self.attention(seq_emb, seq_emb, seq_emb, key_padding_mask=mask)
 
-        # --- Mean Pooling ---
-        # Transform mask into data (0.0 or 1.0)
-        mask_float = (~mask).float().unsqueeze(-1) # [batch, 20, 1]
+        # --- Last Valid Action ---
 
-        sum_emb = torch.sum(attn_output * mask_float, dim=1)
-        count = torch.sum(mask_float, dim=1)
+        valid_lengths = (~mask).long().sum(dim=1)
+        valid_lengths = torch.where(valid_lengths == 0, torch.tensor(1, device=mask.device))
 
-        final_seq_vec = sum_emb / (count + 1e-8)
+        last_valid_idx = valid_lengths - 1
+        batch_indices = torch.arrange(attn_output.size(0), device=attn_output.device)
+
+        # [batch, emb_dim]
+        final_seq_vec = attn_output[batch_indices, last_valid_idx, :]
 
         return final_seq_vec
