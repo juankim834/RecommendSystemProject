@@ -21,7 +21,7 @@ class SequenceEncoder(nn.Module):
 
         # history genre sep: [batch, 20, 3]
         genre_vec_raw = self.genre_emb(genre_sep)
-        # Transform to 
+        # Transform to [batch, 20]
         genre_vec_pooled = torch.sum(genre_vec_raw, dim=2)
 
         
