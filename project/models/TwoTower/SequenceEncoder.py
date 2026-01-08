@@ -17,6 +17,9 @@ class SequenceEncoder(nn.Module):
         # Self-Attention layer
         self.attention = nn.MultiheadAttention(embed_dim=emb_dim, num_heads=4, batch_first=True)
 
+        # Normalize layer
+        self.layer_norm = nn.LayerNorm(emb_dim)
+
     def forward(self, history_seq, genre_sep):
         
         # history movie seq: [batch, 20]
