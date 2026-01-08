@@ -2,8 +2,19 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+class PositionwiseFeedForward(nn.Module):
+    def __init__(self, d_model, d_ff, dropout=0.1):
+        super().__init__()
+        self.w_1 = nn.Linear(d_model, d_ff)
+        self.w_2 = nn.Linear(d_ff, d_model)
+        self.dropout = nn.Dropout(dropout)
+        self.activation = nn.ReLU()
+    def forward(self, x):
+        # FFN(x) = max(0, xW1 + b1)W2 + b2
+        return self.w_2(self.dropout(self.activation(self.w_1(x))))
+
 class SequenceEncoder(nn.Module):
-    def __init__(self, item_count, genre_count, emb_dim=32):
+    def __init__(self, item_count, genre_count, emb_dim=32, dropout = 0.1):
         super().__init__()
         
         # Genre Embedding
@@ -16,9 +27,14 @@ class SequenceEncoder(nn.Module):
 
         # Self-Attention layer
         self.attention = nn.MultiheadAttention(embed_dim=emb_dim, num_heads=4, batch_first=True)
-
         # Normalize layer
         self.layer_norm = nn.LayerNorm(emb_dim)
+
+        # FFN Layer
+        self.ffn = PositionwiseFeedForward(d_model=emb_dim, d_ff=emb_dim * 4, dropout=0.1)
+        self.norm2 = nn.LayerNorm(emb_dim)
+
+        self.dropout = nn.Dropout(dropout)
 
     def forward(self, history_seq, genre_sep):
         
@@ -50,6 +66,9 @@ class SequenceEncoder(nn.Module):
 
         # Residual connection
         seq_emb = self.layer_norm(seq_emb + attn_output)
+
+        ffn_output = self.ffn(seq_emb)
+        seq_emb = self.norm2(seq_emb + self.dropout(ffn_output))
 
         # --- Pooling (Last Valid Item) ---
         valid_lengths = (~mask).long().sum(dim=1)
