@@ -108,7 +108,7 @@ padded_movie_genre_dict = {k: get_padded_genres(v) for k, v in movie_genre_dict.
 
 # Time features processing
 ratings['timestamp_dt'] = pd.to_datetime(ratings['timestamp'], unit='s')
-ratings['rating_hour'] = ratings['timestamp_dt'].dt.hour.astype(int)
+ratings['rating_hour'] = ratings['timestamp_dt'].dt.hour.astype(int) + 1
 ratings['rating_weekday'] = ratings['timestamp_dt'].dt.weekday.astype(int) + 1
 ratings['rating_month'] = ratings['timestamp_dt'].dt.month.astype(int)
 ratings['rating_year'] = ratings['timestamp_dt'].dt.year + 1
