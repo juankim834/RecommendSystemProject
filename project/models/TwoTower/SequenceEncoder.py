@@ -14,7 +14,15 @@ class PositionwiseFeedForward(nn.Module):
         return self.w_2(self.dropout(self.activation(self.w_1(x))))
 
 class SequenceEncoder(nn.Module):
-    def __init__(self, item_count, genre_count, emb_dim=32, dropout = 0.1, max_seq_len=20):
+    def __init__(self, item_count: int, genre_count: int, emb_dim=32, dropout = 0.1, max_seq_len=20):
+
+        '''
+        :params item_count: Total number of items
+        :params genre_count: Total number of genres
+        :params emb_dim: Length of Embedding output vector
+        :params dropout: Dropout probability rate
+        :params max_seq_len: The length of the sequence
+        '''
         super().__init__()
         
         # Genre Embedding
