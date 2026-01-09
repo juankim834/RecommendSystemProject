@@ -61,20 +61,30 @@ class UserTower(nn.Module):
         Encodes static user profile features, temporal context features,
         and historical behavior sequences into a unified user representation.
         
-        :param self: torch.LongTensor
-            Tensor of shape (batch_size,) containing user ID indices.
         :param user_id: torch.LongTensor
-        :param gender: 说明
-        :param age: 说明
-        :param occup: 说明
-        :param zip: 说明
-        :param year: 说明
-        :param month: 说明
-        :param hour: 说明
-        :param weekday: 说明
-        :param user_activity: 说明
-        :param hist_movie_ids: 说明
-        :param hist_genre_ids: 说明
+            Tensor of shape (batch_size,) containing user ID indices.
+        :param gender: torch.LongTensor
+            Tensor of shape (batch_size,) containing encoded gender features.
+        :param age: torch.LongTensor
+            Tensor of shape (batch_size,) containing encoded age group indices.
+        :param occup: torch.LongTensor
+            Tensor of shape (batch_size,) containing encoded occupation indices.
+        :param zip: torch.LongTensor
+            Tensor of shape (batch_size,) containing encoded ZIP code indices.
+        :param year: torch.LongTensor
+            Tensor of shape (batch_size,) representing the year of interaction.
+        :param month: torch.LongTensor
+            Tensor of shape (batch_size,) representing the month of interaction.
+        :param hour: torch.LongTensor
+            Tensor of shape (batch_size,) representing the hour of interaction.
+        :param weekday: torch.LongTensor
+            Tensor of shape (batch_size,) representing the weekday of interaction.
+        :param user_activity: torch.LongTensor
+            Tensor of shape (batch_size, activity_dim) representing user-level activity statistics (interaction frequency).
+        :param hist_movie_ids: torch.LongTensor
+            Tensor of shape (batch_size, seq_len) containing historical movie IDs.
+        :param hist_genre_ids: torch.LongTensor
+            Tensor of shape (batch_size, seq_len) containing genre IDs corresponding to the historical movies.
         '''
         seq_vec = self.seq_encoder(hist_movie_ids, hist_genre_ids)
         user_vec = self.user_id_emb(user_id)
