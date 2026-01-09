@@ -1,7 +1,6 @@
 import pandas as pd
 import numpy as np
 from sklearn.preprocessing import LabelEncoder
-from keras.utils import pad_sequences
 
 
 movies = pd.read_csv(
@@ -109,19 +108,26 @@ padded_movie_genre_dict = {k: get_padded_genres(v) for k, v in movie_genre_dict.
 
 # Time features processing
 ratings['timestamp_dt'] = pd.to_datetime(ratings['timestamp'], unit='s')
-ratings['rating_hour'] = ratings['timestamp_dt'].dt.hour / 24.0
-ratings['rating_weekday'] = ratings['timestamp_dt'].dt.weekday / 6.0
+ratings['rating_hour'] = ratings['timestamp_dt'].dt.hour.astype(int)
+ratings['rating_weekday'] = ratings['timestamp_dt'].dt.weekday.astype(int) + 1
 ratings['rating_month'] = ratings['timestamp_dt'].dt.month.astype(int)
-ratings['rating_year'] = ratings['timestamp_dt'].dt.year
+ratings['rating_year'] = ratings['timestamp_dt'].dt.year + 1
 
+BASE_YEAR = 1900
 # Label Encoding for Year
-lbe_year = LabelEncoder()
-ratings['year_enc'] = lbe_year.fit_transform(ratings['rating_year'])
+def encode_year(year_series):
+    encoded = year_series - BASE_YEAR + 1
+    encoded = encoded.fillna(0)
+    encoded[encoded < 0] = 0
+    return encoded.astype(int)
 
-# Calculate time lag features(Rating comment year - Movie release year)
-ratings['time_lag'] = ratings['rating_year'] - ratings['release_year']
-ratings['time_lag'] = ratings['time_lag'].clip(lower=0)
-ratings['time_lag_norm'] = np.log1p(ratings['time_lag'])
+ratings['year_enc'] = encode_year(ratings['rating_year'])
+movies['release_year'] = encode_year(movies['release_year'])
+
+# # Calculate time lag features(Rating comment year - Movie release year)(Deprecated)
+# ratings['time_lag'] = ratings['rating_year'] - ratings['release_year']
+# ratings['time_lag'] = ratings['time_lag'].clip(lower=0)
+# ratings['time_lag_norm'] = np.log1p(ratings['time_lag'])
 
 ratings = ratings.sort_values(by=['user_id_enc', 'timestamp']).reset_index(drop=False)
 
@@ -219,6 +225,7 @@ test = add_stat_features(test)
 
 print("Check Train samples:")
 print(train[['user_id_enc', 'user_activity_log', 'movie_pop_log', 'movie_avg_rate_log']].head())
+print(train[['user_id_enc', 'hist_movie_ids', 'hist_genre_ids']].head())
 
 print("\nCheck Test samples (Verification):")
 print(test[['user_activity_log', 'movie_pop_log']].isna().sum())
@@ -237,7 +244,6 @@ with open("./data/cleaned/encoders.pkl", "wb") as f:
         'gender_encoder': lbe_gender,
         'age_encoder': lbe_age,
         'occupation_encoder': lbe_occ,
-        'year_encoder': lbe_year,
         'genre_map': padded_movie_genre_dict,
         'genre_vocab_size': len(genre2int) + 1
     }, f)
