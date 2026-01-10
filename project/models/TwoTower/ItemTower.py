@@ -46,3 +46,4 @@ class ItemTower(nn.Module):
         combined_vec = torch.cat([movie_id_vec, year_vec, genre_vec_pooled], dim=1)
 
         return self.mlp(combined_vec)
+    
