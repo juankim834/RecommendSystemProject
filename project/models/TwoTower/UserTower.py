@@ -13,7 +13,7 @@ class UserTower(nn.Module):
                  # User Dense features
                  user_activity_dim: int, 
                  # MLP Parameters
-                 mlp_hidden_dims: int, output_dims: int,
+                 mlp_hidden_dims: list[int], output_dims: int,
                  dropout=0.1, 
                  weekday_vocab_size=8,  hour_vocab_size=25, month_vocab_size=12, dense_feat_emb_dim=16):
         super().__init__()
@@ -32,7 +32,7 @@ class UserTower(nn.Module):
         self.occup_emb = nn.Embedding(occup_group_count, user_feat_dim)
         self.zip_emb = nn.Embedding(zip_count, user_feat_dim)
         self.year_emb = nn.Embedding(year_vocab_size, year_emb_dim)
-        self.month_emb = nn.Embedding(month_vocab_size, month_emb_dim)
+        self.month_emb = nn.Embedding(month_vocab_size, month_emb_dim, padding_idx=0)
         self.weekday_emb = nn.Embedding(weekday_vocab_size, weekday_emb_dim, padding_idx=0)
         self.hour_emb = nn.Embedding(hour_vocab_size, hour_emb_dim, padding_idx=0)
 
@@ -50,48 +50,43 @@ class UserTower(nn.Module):
     def forward(
             self, 
             # Sparse user features
-            user_id, gender, age, occup, zip, year, month, 
+            user_id, gender, age, occup, zip_code, year, month, hour, weekday, 
             # Dense user features
-            hour, weekday, user_activity, 
+            user_activity, 
             # Sequence user features
             hist_movie_ids, hist_genre_ids):
-        '''
+        
+        """
         Forward pass of the user tower.
 
-        Encodes static user profile features, temporal context features,
+        Encodes static user profile features, temporal context features, 
         and historical behavior sequences into a unified user representation.
         
-        :param user_id: torch.LongTensor
-            Tensor of shape (batch_size,) containing user ID indices.
-        :param gender: torch.LongTensor
-            Tensor of shape (batch_size,) containing encoded gender features.
-        :param age: torch.LongTensor
-            Tensor of shape (batch_size,) containing encoded age group indices.
-        :param occup: torch.LongTensor
-            Tensor of shape (batch_size,) containing encoded occupation indices.
-        :param zip: torch.LongTensor
-            Tensor of shape (batch_size,) containing encoded ZIP code indices.
-        :param year: torch.LongTensor
-            Tensor of shape (batch_size,) representing the year of interaction.
-        :param month: torch.LongTensor
-            Tensor of shape (batch_size,) representing the month of interaction.
-        :param hour: torch.LongTensor
-            Tensor of shape (batch_size,) representing the hour of interaction.
-        :param weekday: torch.LongTensor
-            Tensor of shape (batch_size,) representing the weekday of interaction.
-        :param user_activity: torch.LongTensor
-            Tensor of shape (batch_size, activity_dim) representing user-level activity statistics (interaction frequency).
-        :param hist_movie_ids: torch.LongTensor
-            Tensor of shape (batch_size, seq_len) containing historical movie IDs.
-        :param hist_genre_ids: torch.LongTensor
-            Tensor of shape (batch_size, seq_len) containing genre IDs corresponding to the historical movies.
-        '''
+        Args:
+            user_id (torch.LongTensor): Tensor of shape (batch_size,) containing user ID indices.
+            gender (torch.LongTensor): Tensor of shape (batch_size,) containing encoded gender features.
+            age (torch.LongTensor): Tensor of shape (batch_size,) containing encoded age group indices.
+            occup (torch.LongTensor): Tensor of shape (batch_size,) containing encoded occupation indices.
+            zip_code (torch.LongTensor): Tensor of shape (batch_size,) containing encoded ZIP code indices.
+            year (torch.LongTensor): Tensor of shape (batch_size,) representing the year of interaction.
+            month (torch.LongTensor): Tensor of shape (batch_size,) representing the month of interaction.
+            hour (torch.LongTensor): Tensor of shape (batch_size,) representing the hour of interaction.
+            weekday (torch.LongTensor): Tensor of shape (batch_size,) representing the weekday of interaction.
+            user_activity (torch.FloatTensor): Tensor of shape (batch_size, activity_dim) representing user-level activity statistics.
+            hist_movie_ids (torch.LongTensor): Tensor of shape (batch_size, seq_len) containing historical movie IDs.
+            hist_genre_ids (torch.LongTensor): Tensor of shape (batch_size, seq_len) containing genre IDs corresponding to the historical movies.
+
+        Returns:
+            torch.FloatTensor: Output tensor of shape (batch_size, output_dim).
+            This represents the final embedding of the user. 
+        """
+
         seq_vec = self.seq_encoder(hist_movie_ids, hist_genre_ids)
         user_vec = self.user_id_emb(user_id)
         gender_vec = self.gender_emb(gender)
         age_vec = self.age_emb(age)
         occup_vec = self.occup_emb(occup)
-        zip_vec = self.zip_emb(zip)
+        zip_vec = self.zip_emb(zip_code)
         year_vec = self.year_emb(year)
         month_vec = self.month_emb(month)
         hour_vec = self.hour_emb(hour)
@@ -99,7 +94,7 @@ class UserTower(nn.Module):
 
         user_act_vec = F.relu(self.user_act_proj(user_activity))
 
-        combined_vec = torch.cat([user_vec, gender_vec, age_vec, occup_vec, zip_vec, year_vec, month_vec, hour_vec, weekday_vec, seq_vec])
+        combined_vec = torch.cat([user_vec, gender_vec, age_vec, occup_vec, zip_vec, year_vec, month_vec, hour_vec, weekday_vec, user_act_vec, seq_vec], dim=1)
         output = self.mlp(combined_vec)
         return output
 
