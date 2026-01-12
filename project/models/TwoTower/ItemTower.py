@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from Tower import MLP_Tower
+from project.models.TwoTower.Tower import MLP_Tower
 
 
 class ItemTower(nn.Module):
