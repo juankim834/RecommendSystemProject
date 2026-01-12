@@ -44,7 +44,7 @@ class SequenceEncoder(nn.Module):
 
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, history_seq, genre_sep):
+    def forward(self, history_seq, genre_sep):  
         
         # history movie seq: [batch, 20]
         batch_size, seq_len = history_seq.shape
@@ -67,6 +67,10 @@ class SequenceEncoder(nn.Module):
         # Generate Mask
         # key_padding_mask: [batch, 20], True stands for padding location
         mask = (history_seq == 0)
+
+        all_padded_mask = mask.all(dim=1)
+        if all_padded_mask.any():
+            mask[all_padded_mask, 0] = False
 
         # Calculate Self-Attention
         # attn_output: [batch, 20, emb_dim]
