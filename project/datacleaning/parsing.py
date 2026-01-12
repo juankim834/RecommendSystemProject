@@ -67,11 +67,6 @@ ratings = ratings.merge(
     on='user_id', 
     how='left'
 )
-ratings = ratings.merge(
-    movies[['movie_id', 'release_year']], 
-    on='movie_id',
-    how='left'
-)
 
 # Label Encoding
 # Mapping the incontinuous ids into continuous
@@ -106,6 +101,14 @@ def get_padded_genres(genre_list):
         return genre_list + [0] * (3 - len(genre_list))
 padded_movie_genre_dict = {k: get_padded_genres(v) for k, v in movie_genre_dict.items()}
 
+ratings['genre_ids'] = ratings['movie_id_enc'].map(padded_movie_genre_dict)
+
+ratings = ratings.merge(
+    movies[['movie_id', 'release_year']], 
+    on='movie_id',
+    how='left'
+)
+
 # Time features processing
 ratings['timestamp_dt'] = pd.to_datetime(ratings['timestamp'], unit='s')
 ratings['rating_hour'] = ratings['timestamp_dt'].dt.hour.astype(int) + 1
@@ -122,7 +125,7 @@ def encode_year(year_series):
     return encoded.astype(int)
 
 ratings['year_enc'] = encode_year(ratings['rating_year'])
-movies['release_year'] = encode_year(movies['release_year'])
+ratings['release_year_enc'] = encode_year(ratings['release_year'])
 
 # # Calculate time lag features(Rating comment year - Movie release year)(Deprecated)
 # ratings['time_lag'] = ratings['rating_year'] - ratings['release_year']
@@ -165,7 +168,7 @@ def convert_hist_movies_to_genres(movie_id_list):
     genre_list = []
     for movie_id in movie_id_list:
         genres = padded_movie_genre_dict.get(movie_id, [0, 0, 0])
-        genre_list.extend(genres)
+        genre_list.append(genres)
     return genre_list
 
 print("Generating history genre features...")
@@ -247,3 +250,4 @@ with open("./data/cleaned/encoders.pkl", "wb") as f:
         'genre_map': padded_movie_genre_dict,
         'genre_vocab_size': len(genre2int) + 1
     }, f)
+
