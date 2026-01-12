@@ -106,7 +106,6 @@ flowchart TB
         I_Concat[Concat Features]:::process
         I_FinalNorm[Layer Normalization]:::tower
         
-        %% 连线
         I_Sparse_In --> I_MLP --> I_Concat
         I_Dense_In --> I_Linear --> I_Concat
         I_Concat --> I_FinalNorm
