@@ -1,11 +1,12 @@
 # RecommendSystemProject
+
 This is for personal practice project
 
 ## What is in this system?
 
 ### DSSM
 
-This project implements a customized **Dual-Tower DSSM **(Deep Structured Semantic Model) designed for retrieval tasks. The model explicitly separates user and item feature processing to allow for efficient large-scale retrieval using ANN (Approximate Nearest Neighbor).
+This project implements a customized **Dual-Tower DSSM**(Deep Structured Semantic Model) designed for retrieval tasks. The model explicitly separates user and item feature processing to allow for efficient large-scale retrieval using ANN (Approximate Nearest Neighbor).
 
 The architecture consists of two main towers:
 
@@ -37,6 +38,7 @@ The architecture consists of two main towers:
 
 #### Code snippet
 
+```mermaid
 flowchart TB
     %% Style definition
     classDef input fill:#e1f5fe,stroke:#01579b,stroke-width:2px,rx:5,ry:5;
@@ -118,4 +120,4 @@ flowchart TB
     DotProd --> Loss
     Label[True Labels]:::input -.-> Loss
     linkStyle default stroke:#333,stroke-width:2px;
-
+```
