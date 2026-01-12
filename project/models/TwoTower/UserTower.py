@@ -1,21 +1,21 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from SequenceEncoder import SequenceEncoder
-from Tower import MLP_Tower
+from project.models.TwoTower.SequenceEncoder import SequenceEncoder
+from project.models.TwoTower.Tower import MLP_Tower
 
 class UserTower(nn.Module):
     def __init__(self, 
                  # Sequence parameters
                  item_count: int, genre_count: int, seq_emb_dim: int, max_seq_len: int, 
                  # User Sparse featrues
-                 user_count: int, gender_count: int, user_feat_dim: int, age_group_count: int, occup_group_count: int, zip_count: int, year_vocab_size: int, year_emb_dim: int, month_emb_dim: int, weekday_emb_dim: int, hour_emb_dim: int,
+                 user_count: int, user_id_dim: int,  gender_count: int, gender_dim: int, age_group_count: int, age_group_dim: int,occup_group_count: int, occp_dim: int, zip_count: int, zip_dim:int, year_vocab_size: int, year_emb_dim: int, month_emb_dim: int, weekday_emb_dim: int, hour_emb_dim: int,
                  # User Dense features
                  user_activity_dim: int, 
                  # MLP Parameters
                  mlp_hidden_dims: list[int], output_dims: int,
                  dropout=0.1, 
-                 weekday_vocab_size=8,  hour_vocab_size=25, month_vocab_size=12, dense_feat_emb_dim=16):
+                 weekday_vocab_size=8,  hour_vocab_size=25, month_vocab_size=13, dense_feat_emb_dim=16):
         super().__init__()
 
         self.seq_encoder = SequenceEncoder(
@@ -26,19 +26,19 @@ class UserTower(nn.Module):
             dropout=dropout
         )
 
-        self.user_id_emb = nn.Embedding(user_count, user_feat_dim)
-        self.gender_emb = nn.Embedding(gender_count, user_feat_dim)
-        self.age_emb = nn.Embedding(age_group_count, user_feat_dim)
-        self.occup_emb = nn.Embedding(occup_group_count, user_feat_dim)
-        self.zip_emb = nn.Embedding(zip_count, user_feat_dim)
-        self.year_emb = nn.Embedding(year_vocab_size, year_emb_dim)
+        self.user_id_emb = nn.Embedding(user_count, user_id_dim, padding_idx=0)
+        self.gender_emb = nn.Embedding(gender_count, gender_dim, padding_idx=0)
+        self.age_emb = nn.Embedding(age_group_count, age_group_dim, padding_idx=0)
+        self.occup_emb = nn.Embedding(occup_group_count, occp_dim, padding_idx=0)
+        self.zip_emb = nn.Embedding(zip_count, zip_dim, padding_idx=0)
+        self.year_emb = nn.Embedding(year_vocab_size, year_emb_dim, padding_idx=0)
         self.month_emb = nn.Embedding(month_vocab_size, month_emb_dim, padding_idx=0)
         self.weekday_emb = nn.Embedding(weekday_vocab_size, weekday_emb_dim, padding_idx=0)
         self.hour_emb = nn.Embedding(hour_vocab_size, hour_emb_dim, padding_idx=0)
 
         self.user_act_proj = nn.Linear(user_activity_dim, dense_feat_emb_dim)
 
-        self.total_input_dim = seq_emb_dim + 5 * user_feat_dim + year_emb_dim + month_emb_dim + weekday_emb_dim + hour_emb_dim + dense_feat_emb_dim
+        self.total_input_dim = seq_emb_dim + user_id_dim + gender_dim + age_group_dim + occp_dim + zip_dim + year_emb_dim + month_emb_dim + weekday_emb_dim + hour_emb_dim + dense_feat_emb_dim
 
         self.mlp = MLP_Tower(
             input_dim=self.total_input_dim,
@@ -80,6 +80,7 @@ class UserTower(nn.Module):
             torch.FloatTensor: Output tensor of shape (batch_size, output_dim).
             This represents the final embedding of the user. 
         """
+                
 
         seq_vec = self.seq_encoder(hist_movie_ids, hist_genre_ids)
         user_vec = self.user_id_emb(user_id)
@@ -92,7 +93,8 @@ class UserTower(nn.Module):
         hour_vec = self.hour_emb(hour)
         weekday_vec = self.weekday_emb(weekday)
 
-        user_act_vec = F.relu(self.user_act_proj(user_activity))
+
+        user_act_vec = F.relu(self.user_act_proj(user_activity.view(-1, 1).float()))
 
         combined_vec = torch.cat([user_vec, gender_vec, age_vec, occup_vec, zip_vec, year_vec, month_vec, hour_vec, weekday_vec, user_act_vec, seq_vec], dim=1)
         output = self.mlp(combined_vec)
