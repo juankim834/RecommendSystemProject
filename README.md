@@ -42,13 +42,13 @@ The architecture consists of two main towers:
 flowchart LR
     %% ================= User Tower =================
     subgraph U[User Tower]
-        U1[Sparse Features\n(User ID / Category)]
-        U2[Dense Features\n(Numerical Values)]
-        U3[Sequential Features\n(User Behavior Sequence)]
+        U1["Sparse Features\n(User ID / Category)"]
+        U2["Dense Features\n(Numerical Values)"]
+        U3["Sequential Features\n(User Behavior Sequence)"]
 
-        U1 --> U1E[MLP_Tower\nEmbedding]
+        U1 --> U1E["MLP_Tower\nEmbedding"]
         U2 --> U2E[Linear + ReLU]
-        U3 --> U3E[Sequence Encoder\nEmbedding Layer\nMulti-Head Attention\nLayerNorm]
+        U3 --> U3E["Sequence Encoder\nEmbedding Layer\nMulti-Head Attention\nLayerNorm"]
 
         U1E --> UC[Concatenate]
         U2E --> UC
@@ -60,8 +60,8 @@ flowchart LR
 
     %% ================= Item Tower =================
     subgraph I[Item Tower]
-        I1[Sparse Features\n(Item ID / Category)]
-        I2[Dense Features\n(Numerical Values)]
+        I1["Sparse Features\n(Item ID / Category)"]
+        I2["Dense Features\n(Numerical Values)"]
 
         I1 --> I1E[MLP\nEmbedding]
         I2 --> I2E[Linear + ReLU]
