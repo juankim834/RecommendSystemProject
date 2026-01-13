@@ -39,85 +39,43 @@ The architecture consists of two main towers:
 #### Code snippet
 
 ```mermaid
-flowchart TB
-    %% Style definition
-    classDef input fill:#e1f5fe,stroke:#01579b,stroke-width:2px,rx:5,ry:5;
-    classDef process fill:#fff9c4,stroke:#fbc02d,stroke-width:2px;
-    classDef trans fill:#e0f2f1,stroke:#00695c,stroke-width:2px,stroke-dasharray: 5 5;
-    classDef pool fill:#b2dfdb,stroke:#004d40,stroke-width:2px,rx:5,ry:5;
-    classDef tower fill:#f3e5f5,stroke:#7b1fa2,stroke-width:4px;
-    classDef final fill:#ffebee,stroke:#c62828,stroke-width:2px,rx:5,ry:5;
+flowchart LR
+    %% ================= User Tower =================
+    subgraph U[User Tower]
+        U1[Sparse Features\n(User ID / Category)]
+        U2[Dense Features\n(Numerical Values)]
+        U3[Sequential Features\n(User Behavior Sequence)]
 
-    subgraph Interaction_Layer [Interaction & Loss]
-        direction TB
-        DotProd((Dot Product))
-        Loss[Cross-Entropy Loss]:::final
+        U1 --> U1E[MLP_Tower\nEmbedding]
+        U2 --> U2E[Linear + ReLU]
+        U3 --> U3E[Sequence Encoder\nEmbedding Layer\nMulti-Head Attention\nLayerNorm]
+
+        U1E --> UC[Concatenate]
+        U2E --> UC
+        U3E --> UC
+
+        UC --> UVec[User Representation]
+        UVec --> UNorm[L2 Normalization]
     end
 
-    subgraph User_Tower [User Tower]
-        direction TB
-        
-        %% Input layer
-        U_Seq_In[Input: Sequence Features]:::input
-        U_Sparse_In[Input: Sparse Features]:::input
-        U_Dense_In[Input: Dense Features]:::input
+    %% ================= Item Tower =================
+    subgraph I[Item Tower]
+        I1[Sparse Features\n(Item ID / Category)]
+        I2[Dense Features\n(Numerical Values)]
 
-        %% Processing Layer - Sequence (Transformer)
-        subgraph Transformer_Block [Sequence Encoder]
-            direction TB
-            T_Emb[Embedding Layer]:::trans
-            T_MHA[Multi-head Attention]:::trans
-            T_Norm[Layer Normalization]:::trans
-            
-            T_Emb --> T_MHA --> T_Norm
-        end
-        
-        %% Pooling Layer
-        T_Pool[Mean Pooling]:::pool
+        I1 --> I1E[MLP\nEmbedding]
+        I2 --> I2E[Linear + ReLU]
 
-        %% Processing Layer - Others
-        U_MLP[MLP Tower / Embedding]:::process
-        U_Linear[Linear Layer + ReLU]:::process
-        
-        %% Concating and Output
-        U_Concat[Concat Features]:::process
-        U_FinalNorm[Layer Normalization]:::tower
+        I1E --> IC[Concatenate]
+        I2E --> IC
 
-        U_Seq_In --> T_Emb
-        T_Norm --> T_Pool
-        T_Pool --> U_Concat
-
-        U_Sparse_In --> U_MLP --> U_Concat
-        U_Dense_In --> U_Linear --> U_Concat
-        
-        U_Concat --> U_FinalNorm
+        IC --> IVec[Item Representation]
+        IVec --> INorm[L2 Normalization]
     end
 
-    subgraph Item_Tower [Item Tower]
-        direction TB
-        
-        %% Input Layer
-        I_Sparse_In[Input: Sparse Features]:::input
-        I_Dense_In[Input: Dense Features]:::input
-        
-        %% Processing Layer
-        I_MLP[MLP Processing]:::process
-        I_Linear[Linear Layer + ReLU]:::process
-        
-        %% Concatting and Output
-        I_Concat[Concat Features]:::process
-        I_FinalNorm[Layer Normalization]:::tower
-        
-        I_Sparse_In --> I_MLP --> I_Concat
-        I_Dense_In --> I_Linear --> I_Concat
-        I_Concat --> I_FinalNorm
-    end
+    %% ================= Matching =================
+    UNorm --> DP[Dot Product Similarity]
+    INorm --> DP
 
-    %% Connection of Towers and Processing Layers
-    U_FinalNorm -- User Vector --> DotProd
-    I_FinalNorm -- Item Vector --> DotProd
-    
-    DotProd --> Loss
-    Label[True Labels]:::input -.-> Loss
-    linkStyle default stroke:#333,stroke-width:2px;
+    DP --> Loss[Cross-Entropy Loss]
 ```
