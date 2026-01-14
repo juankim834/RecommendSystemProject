@@ -51,7 +51,7 @@ class GenericTower(nn.Module):
         sequence_feature = tower_cfg.get('sequence_features', [])
         seq_total_dim = 0
         if len(sequence_feature) > 0:
-            model_dim = tower_cfg.get("embedding_dim")
+            model_dim = tower_cfg.get("embedding_dim", 32)
             transformer_cfg = tower_cfg.get("transformer_parameters", {})
             max_seq_len = transformer_cfg.get("max_seq_len", 20)
             trans_dropout = transformer_cfg.get("dropout", 0.1)
