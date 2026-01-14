@@ -109,6 +109,12 @@ ratings = ratings.merge(
     how='left'
 )
 
+# Label Generating
+# Rating label 0 or 1, meaning a positive view of this rating activity. 
+Threshold = 3
+ratings['label'] = ratings['rating'].apply(lambda x: 1 if x >= Threshold else 0)
+ratings = ratings.loc[ratings['label'] == 1]
+
 # Time features processing
 ratings['timestamp_dt'] = pd.to_datetime(ratings['timestamp'], unit='s')
 ratings['rating_hour'] = ratings['timestamp_dt'].dt.hour.astype(int) + 1
@@ -173,14 +179,6 @@ def convert_hist_movies_to_genres(movie_id_list):
 
 print("Generating history genre features...")
 ratings['hist_genre_ids'] = ratings['hist_movie_ids'].progress_apply(convert_hist_movies_to_genres)
-
-
-# Merge all the features into Ratings list
-ratings['target_genre_ids'] = ratings['movie_id_enc'].map(padded_movie_genre_dict)
-# Label Generating
-# Rating label 0 or 1, meaning a positive view of this rating activity. 
-Threshold = 4
-ratings['label'] = ratings['rating'].apply(lambda x: 1 if x >= Threshold else 0)
 
 # Spliting train test sets. 
 # Sorting data

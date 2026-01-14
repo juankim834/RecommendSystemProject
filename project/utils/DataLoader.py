@@ -28,11 +28,7 @@ class RecommendationDataset(Dataset):
         row = self.data[idx]
         data_dict = {}
         for tower_name, tower_config in self.cfg.items():
-            # 动态获取当前塔设定的 max_seq_len
-            # 比如 user_tower 是 20，item_tower 是 3
             tower_seq_len = tower_config.get("transformer_parameters", {}).get("max_seq_len", 20)
-            
-            # 将当前塔的配置传给处理函数
             data_dict[tower_name] = self._get_tower_meta(row, tower_config, tower_seq_len)
             
         return data_dict
@@ -56,9 +52,12 @@ class RecommendationDataset(Dataset):
         # 2. Dense Data
         if dense_id_list:
             feat_data_dict = {}
+            val = row.get(feat_name, 0.0)
             for feat_name in dense_id_list:
-                val = row.get(feat_name, 0.0)
-                feat_data_dict[feat_name] = torch.tensor(val, dtype=torch.float32)
+                tensor_val = torch.tensor(val, dtype=torch.float32)
+                if tensor_val.ndim == 0:
+                    tensor_val = tensor_val.unsqueeze(0)
+                feat_data_dict[feat_name] = tensor_val
             data_dict["dense_feature"] = feat_data_dict
         
         # 3. Sequence Data
