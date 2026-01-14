@@ -1,0 +1,89 @@
+two_tower:
+  user_tower:
+    mlp_hidden_dim: [128, 64]
+    output_dims: 32
+    dropout: 0.1
+    embedding_dim: 32
+    transformer_parameters:
+      max_seq_len: 20
+      n_head: 4
+      n_layers: 2
+      dropout: 0.1
+    sparse_features:
+    - name: user_id_enc
+      vocab_size: 6060
+      embedding_dim: 32
+    - name: gender_enc
+      vocab_size: 3
+      embedding_dim: 4
+    - name: age_enc
+      vocab_size: 9
+      embedding_dim: 8
+    - name: occupation_enc
+      vocab_size: 22
+      embedding_dim: 8
+    - name: zip_enc
+      vocab_size: 685
+      embedding_dim: 16
+    - name: year_enc
+      vocab_size: 152
+      embedding_dim: 8
+    - name: rating_month
+      vocab_size: 13
+      embedding_dim: 4
+    - name: rating_weekday
+      vocab_size: 8
+      embedding_dim: 4
+    - name: rating_hour
+      vocab_size: 25
+      embedding_dim: 4
+    dense_features:
+    - name: user_activity_log
+      dim: 1
+      embedding_dim: 8
+    sequence_features:
+    - name: hist_movie_ids
+      vocab_size: 3500
+      embedding_dim: 32
+      padding_idx: 0
+    - name: hist_genre_ids
+      vocab_size: 25
+      embedding_dim: 8
+      padding_idx: 0
+      pooling: mean
+  
+  item_tower:
+    mlp_hidden_dim: [128, 64]
+    output_dims: 32
+    dropout: 0.1
+    embedding_dim: 32
+    transformer_parameters:
+      max_seq_len: 3
+      FFN_dim: 128
+      n_head: 2
+      n_layers: 2
+      dropout: 0.1
+    sparse_features:
+    - name: movie_id_enc
+      vocab_size: 3500
+      embedding_dim: 32
+    dense_features:
+    - name: movie_pop_log
+      dim: 1
+      embedding_dim: 8
+    - name: movie_avg_rate_log
+      dim: 1
+      embedding_dim: 8
+    sequence_features: 
+    - name: genre_ids
+      vocab_size: 25
+      embedding_dim: 8
+      padding_idx: 0
+      pooling: sum
+train:
+  batch_size: 512
+  epochs: 50
+  learning_rate: 0.005
+  device: cuda
+  temperature: 0.1
+
