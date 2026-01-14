@@ -1,5 +1,5 @@
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset
 import pandas as pd
 from project.utils.config_utils import file_loader
 
@@ -16,9 +16,8 @@ class RecommendationDataset(Dataset):
         cfg = raw_cfg.get("two_tower", {})
         self.cfg = cfg
         if len(cfg) == 0:
-            raise RuntimeError("Config loading failed, no items in config")
+            raise RuntimeError("Config loading failed, no items in config, do you need to run config_utils.py to dump sample config?")
         data_raw = pd.read_pickle(pkl_path)
-        data_raw = data_raw[data_raw['label']==1]
         self.data = data_raw.to_dict('records')
     
     def __len__(self):
@@ -52,8 +51,8 @@ class RecommendationDataset(Dataset):
         # 2. Dense Data
         if dense_id_list:
             feat_data_dict = {}
-            val = row.get(feat_name, 0.0)
             for feat_name in dense_id_list:
+                val = row.get(feat_name, 0.0)
                 tensor_val = torch.tensor(val, dtype=torch.float32)
                 if tensor_val.ndim == 0:
                     tensor_val = tensor_val.unsqueeze(0)

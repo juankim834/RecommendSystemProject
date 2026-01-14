@@ -5,6 +5,7 @@ from transformers import get_cosine_schedule_with_warmup
 from torch.utils.data import DataLoader
 from project.utils.DataLoader import RecommendationDataset
 from project.utils.training_utils import to_device, train_one_epoch, validate
+from project.utils.ItemDataLoader import ItemDataset
 from project.models.TwoTower.GenericTower import GenericTower
 from project.models.TwoTower.TwoTowerModel import TwoTowerModel
 from project.utils.config_utils import load_config
@@ -14,6 +15,7 @@ import os
 CONFIG_PATH = "config.yaml"
 PKL_PATH_TRAIN = "./data/cleaned/train_set.pkl"
 PKL_PATH_VAL = "./data/cleaned/val_set.pkl"
+PKL_PATH_ITEM = "./data/cleaned/item_set.pkl"
 
 cfg = load_config(CONFIG_PATH)
 epochs = cfg.get("train", {}).get("epochs", 10)
@@ -34,6 +36,9 @@ val_dataset = RecommendationDataset(CONFIG_PATH, PKL_PATH_VAL)
 train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=1, persistent_workers=True)
 val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=1, persistent_workers=True)
 
+item_dataset = ItemDataset(CONFIG_PATH, PKL_PATH_ITEM)
+item_loader = DataLoader(item_dataset, batch_size=1024, shuffle=False)
+
 optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
 total_step = len(train_loader) * epochs
@@ -51,9 +56,11 @@ if __name__ == '__main__':
 
     for epoch in range(epochs):
         train_loss = train_one_epoch(model, train_loader, optimizer, DEVICE, scheduler=scheduler)
-        val_loss = validate(model, val_loader, DEVICE)
+        val_loss, acc = validate(model, val_loader, item_loader, DEVICE)
 
-        print(f"Epoch [{epoch+1}/{epochs}] - Train Loss: {train_loss:.4f} - Val Loss: {val_loss:.4f}")
+        print(f"    Epoch [{epoch+1}/{epochs}] - Train Loss: {train_loss:.4f} - Val Loss: {val_loss:.4f}")
+        for k, acccuracy in acc.items():
+            print(f"        Recall@{k} accuracy: {acccuracy:.4f}")
 
         if val_loss < best_val_loss - min_delta:
             best_val_loss = val_loss
@@ -62,7 +69,8 @@ if __name__ == '__main__':
                 'epoch': epoch,
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
-                'loss': val_loss
+                'loss': val_loss,
+                'recall_k': acc
             }
             torch.save(checkpoint, os.path.join(save_dir, "best_model.pth"))
             print(f"  Validation loss improved. Model saved.")
