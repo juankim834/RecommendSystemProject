@@ -99,6 +99,7 @@ class UserTower(nn.Module):
         concat_emb = torch.cat(feature_embs, dim=1)
         output = self.mlp(concat_emb)
         return output
+    
 
 
 
