@@ -1,97 +1,66 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
-class PositionwiseFeedForward(nn.Module):
-    def __init__(self, d_model, d_ff, dropout=0.1):
-        super().__init__()
-        self.w_1 = nn.Linear(d_model, d_ff)
-        self.w_2 = nn.Linear(d_ff, d_model)
-        self.dropout = nn.Dropout(dropout)
-        self.activation = nn.ReLU()
-    def forward(self, x):
-        # FFN(x) = max(0, xW1 + b1)W2 + b2
-        return self.w_2(self.dropout(self.activation(self.w_1(x))))
-
+from project.utils.SequenceFeatureProcessor import SequenceFeatureProcessor as pr
 class SequenceEncoder(nn.Module):
-    def __init__(self, item_count: int, genre_count: int, emb_dim=32, dropout = 0.1, max_seq_len=20):
-
-        '''
-        :params item_count: Total number of items
-        :params genre_count: Total number of genres
-        :params emb_dim: Length of Embedding output vector
-        :params dropout: Dropout probability rate
-        :params max_seq_len: The length of the sequence
-        '''
+    def __init__(self, 
+                 feature_config_list, 
+                 
+                 model_dim=64,
+                 dim_feedforward=4*64,
+                 max_seq_len=20,
+                 n_head=4,
+                 n_layers=1,
+                 dropout=0.1):
         super().__init__()
-        
-        # Genre Embedding
-        self.genre_emb = nn.Embedding(genre_count, emb_dim, padding_idx=0) 
+        self.feature_embedder = pr(feature_config_list, model_dim, max_seq_len)
 
-        # Movie embedding
-        self.item_emb = nn.Embedding(item_count, emb_dim, padding_idx=0)
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=model_dim,
+            nhead=n_head,
+            dim_feedforward=dim_feedforward,
+            dropout=dropout,
+            batch_first=True
+        )
 
-        self.pos_emb = nn.Embedding(max_seq_len, emb_dim)
+        self.transformer_backbone = nn.TransformerEncoder(
+            encoder_layer, 
+            num_layers=n_layers
+        )
 
-        # Self-Attention layer
-        self.attention = nn.MultiheadAttention(embed_dim=emb_dim, num_heads=4, batch_first=True)
-        # Normalize layer
-        self.layer_norm = nn.LayerNorm(emb_dim)
+        self.output_norm = nn.LayerNorm(model_dim)
+    
+    def forward(self, input_dict):
+        """
+        :param input_dict: {'seq1_id': ..., 'seq2_id': ...}
+        """
+        main_feat_name = self.feature_embedder.feature_config_list[0]['name']
+        main_seq = input_dict[main_feat_name]
 
-        # FFN Layer
-        self.ffn = PositionwiseFeedForward(d_model=emb_dim, d_ff=emb_dim * 4, dropout=0.1)
-        self.norm2 = nn.LayerNorm(emb_dim)
+        padding_mask = (main_seq == 0)
 
-        self.dropout = nn.Dropout(dropout)
+        seq_emb = self.feature_embedder(input_dict)
 
-    def forward(self, history_seq, genre_sep):  
-        
-        # history movie seq: [batch, 20]
-        batch_size, seq_len = history_seq.shape
-        # --- Embedding Layer ---
-        movie_vec = self.item_emb(history_seq)
+        context_emb = self.transformer_backbone(
+            src = seq_emb, 
+            src_key_padding_mask = padding_mask
+        )
 
-        # history genre sep: [batch, 20, 3]
-        genre_vec_raw = self.genre_emb(genre_sep)
+        context_emb = self.output_norm(context_emb)
+        final_vec = self._gater_last_valid(context_emb, padding_mask)
 
-        # Transform to [batch, 20]
-        genre_vec_pooled = torch.mean(genre_vec_raw, dim=2)
+        return final_vec
 
-        position = torch.arange(seq_len, device=history_seq.device).unsqueeze(0)
-        pos_vec = self.pos_emb(position)
-        
-        # Combining
-        seq_emb = movie_vec + genre_vec_pooled + pos_vec
+    def _gater_last_valid(self, seq_output, padding_mask):
+        """
+        :param seq_output: [B, L, D]
+        :param padding_mask: [B, L]
+        """
+        valid_lengths = (~padding_mask).long().sum(dim=1)
+        valid_lengths = torch.clamp(valid_lengths, min=1)
 
-        # --- Attention Layer ---
-        # Generate Mask
-        # key_padding_mask: [batch, 20], True stands for padding location
-        mask = (history_seq == 0)
+        last_valid_idx = valid_lengths - 1
+        batch_indices = torch.arange(seq_output.size(0), device=seq_output.device)
 
-        all_padded_mask = mask.all(dim=1)
-        if all_padded_mask.any():
-            mask[all_padded_mask, 0] = False
-
-        # Calculate Self-Attention
-        # attn_output: [batch, 20, emb_dim]
-        attn_output, _ = self.attention(seq_emb, seq_emb, seq_emb, key_padding_mask=mask)
-
-        # Residual connection
-        seq_emb = self.layer_norm(seq_emb + attn_output)
-
-        ffn_output = self.ffn(seq_emb)
-        seq_emb = self.norm2(seq_emb + self.dropout(ffn_output))
-
-        # --- Pooling (Last Valid Item) ---
-        valid_lengths = (~mask).long().sum(dim=1)
-        is_valid_user = (valid_lengths > 0)
-        valid_lengths_clamped = torch.clamp(valid_lengths, min=1)
-
-        last_valid_idx = valid_lengths_clamped - 1
-        batch_indices = torch.arange(batch_size, device=attn_output.device)
-
-        # [batch, emb_dim]
-        final_seq_vec = seq_emb[batch_indices, last_valid_idx, :]
-        final_seq_vec = final_seq_vec * is_valid_user.unsqueeze(-1)# make sure invalid user = 0
-
-        return final_seq_vec
+        return seq_output[batch_indices, last_valid_idx, :]
+    
