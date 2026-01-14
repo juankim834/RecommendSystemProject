@@ -45,6 +45,8 @@ class TwoTowerModel(nn.Module):
 
         if torch.isnan(user_emb).any():
             raise RuntimeError("Found NaN in User Embedding")
+        if torch.isnan(item_emb).any():
+            raise RuntimeError("Found NaN in Item Embedding")
 
         logits = torch.matmul(user_emb, item_emb.transpose(0, 1))
 
