@@ -27,7 +27,7 @@ class GenericTower(nn.Module):
             name = feat["name"]
             vocab_size = feat["vocab_size"]
             embedding_dim = feat["embedding_dim"]
-            padding_idx = feat.get("padding_idx", None)
+            padding_idx = feat.get("padding_idx", 0)
 
             self.embeddings[name] = nn.Embedding(
                 num_embeddings=vocab_size,
@@ -55,6 +55,7 @@ class GenericTower(nn.Module):
             transformer_cfg = tower_cfg.get("transformer_parameters", {})
             max_seq_len = transformer_cfg.get("max_seq_len", 20)
             trans_dropout = transformer_cfg.get("dropout", 0.1)
+            ffN_dim = transformer_cfg.get("FFN_dim", 4*model_dim)
             n_head = transformer_cfg.get("n_head", 4)
             n_layers = transformer_cfg.get("n_layers", 1)
             if model_dim % n_head != 0:
@@ -63,6 +64,7 @@ class GenericTower(nn.Module):
             self.seq_encoder = SequenceEncoder(
                 feature_config_list=sequence_feature,
                 model_dim=model_dim,
+                dim_feedforward=ffN_dim,
                 max_seq_len=max_seq_len,
                 n_head=n_head,
                 n_layers=n_layers,
