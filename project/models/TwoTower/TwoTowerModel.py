@@ -9,19 +9,32 @@ class TwoTowerModel(nn.Module):
         self.item_tower = item_tower
         self.temperature = temperature
 
-    def forward(self, user_input, item_inputs):
+    def forward(self, batch_data):
         """
         Args:
             user_inputs (dict): All parameters of UserTower forward
             item_inputs (dict): All parameters of ItemTower forward
         """
-        user_emb = self.user_tower(**user_input)
-        item_emb = self.item_tower(**item_inputs)
+        user_inputs = batch_data["user_tower"] 
+        item_inputs = batch_data["item_tower"]
+
+        user_emb = self.user_tower(user_inputs)
+        item_emb = self.item_tower(item_inputs)
 
         user_emb = F.normalize(user_emb, p=2, dim=1)
         item_emb = F.normalize(item_emb, p=2, dim=1)
 
         return user_emb, item_emb
+    
+    def predict(self, batch_data):
+        """
+        For the reasoning/evaluation phase: Returns a similarity score (Cosine Similarity).
+        """
+        user_emb, item_emb = self.forward(batch_data)
+        
+        # shape: [batch_size]
+        scores = (user_emb * item_emb).sum(dim=1) 
+        return scores
 
     def compute_loss(self, user_emb, item_emb):
         """
