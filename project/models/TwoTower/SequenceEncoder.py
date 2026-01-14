@@ -25,7 +25,8 @@ class SequenceEncoder(nn.Module):
 
         self.transformer_backbone = nn.TransformerEncoder(
             encoder_layer, 
-            num_layers=n_layers
+            num_layers=n_layers,
+            enable_nested_tensor=False
         )
 
         self.output_norm = nn.LayerNorm(model_dim)
