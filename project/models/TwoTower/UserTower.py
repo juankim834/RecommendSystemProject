@@ -5,101 +5,100 @@ from project.models.TwoTower.SequenceEncoder import SequenceEncoder
 from project.models.TwoTower.Tower import MLP_Tower
 
 class UserTower(nn.Module):
-    def __init__(self, 
-                 # Sequence parameters
-                 item_count: int, genre_count: int, seq_emb_dim: int, max_seq_len: int, 
-                 # User Sparse featrues
-                 user_count: int, user_id_dim: int,  gender_count: int, gender_dim: int, age_group_count: int, age_group_dim: int,occup_group_count: int, occp_dim: int, zip_count: int, zip_dim:int, year_vocab_size: int, year_emb_dim: int, month_emb_dim: int, weekday_emb_dim: int, hour_emb_dim: int,
-                 # User Dense features
-                 user_activity_dim: int, 
-                 # MLP Parameters
-                 mlp_hidden_dims: list[int], output_dims: int,
-                 dropout=0.1, 
-                 weekday_vocab_size=8,  hour_vocab_size=25, month_vocab_size=13, dense_feat_emb_dim=16):
+
+    def __init__(self, cfg):
         super().__init__()
+        cfg_tower = cfg.get('two_tower', {})
+        if (len(cfg_tower.get('user_tower', {}))==0):
+            raise RuntimeError(f'TwoTower Model initializing failed, User Tower has no features')
+        
 
-        self.seq_encoder = SequenceEncoder(
-            item_count=item_count,
-            genre_count=genre_count,
-            emb_dim=seq_emb_dim,
-            max_seq_len=max_seq_len,
-            dropout=dropout
-        )
+        user_tower_cfg = cfg_tower.get('user_tower')
+        mlp_hidden_dims = user_tower_cfg["mlp_hidden_dim"]
+        output_dims = user_tower_cfg["output_dims"]
+        dropout_cfg = user_tower_cfg['dropout']
+        self.embeddings = nn.ModuleDict()
 
-        self.user_id_emb = nn.Embedding(user_count, user_id_dim, padding_idx=0)
-        self.gender_emb = nn.Embedding(gender_count, gender_dim, padding_idx=0)
-        self.age_emb = nn.Embedding(age_group_count, age_group_dim, padding_idx=0)
-        self.occup_emb = nn.Embedding(occup_group_count, occp_dim, padding_idx=0)
-        self.zip_emb = nn.Embedding(zip_count, zip_dim, padding_idx=0)
-        self.year_emb = nn.Embedding(year_vocab_size, year_emb_dim, padding_idx=0)
-        self.month_emb = nn.Embedding(month_vocab_size, month_emb_dim, padding_idx=0)
-        self.weekday_emb = nn.Embedding(weekday_vocab_size, weekday_emb_dim, padding_idx=0)
-        self.hour_emb = nn.Embedding(hour_vocab_size, hour_emb_dim, padding_idx=0)
+        # Initializing Sparse features
+        user_sparse_features = user_tower_cfg.get("sparse_features", [])
+        sparse_total_dim = 0
+        for feat in user_sparse_features:
+            name = feat["name"]
+            vocab_size = feat["vocab_size"]
+            embedding_dim = feat["embedding_dim"]
+            padding_idx = feat.get("padding_idx", None)
 
-        self.user_act_proj = nn.Linear(user_activity_dim, dense_feat_emb_dim)
+            self.embeddings[name] = nn.Embedding(
+                num_embeddings=vocab_size,
+                embedding_dim=embedding_dim,
+                padding_idx=padding_idx
+            )
+            sparse_total_dim = sparse_total_dim + embedding_dim
+        
+        # Initializing Dense features
+        user_dense_feature = user_tower_cfg.get('dense_features', [])
+        dense_total_dim = 0
+        for feat in user_dense_feature:
+            name = feat["name"]
+            origin_dim = feat["dim"]
+            embedding_dim = feat["embedding_dim"]
 
-        self.total_input_dim = seq_emb_dim + user_id_dim + gender_dim + age_group_dim + occp_dim + zip_dim + year_emb_dim + month_emb_dim + weekday_emb_dim + hour_emb_dim + dense_feat_emb_dim
+            self.embeddings[name] = nn.Linear(origin_dim, embedding_dim)
+            dense_total_dim = dense_total_dim + embedding_dim
+        
+        # Initializing Sequence features
+        user_sequence_feature = user_tower_cfg.get('sequence_features', [])
+        seq_total_dim = 0
+        for feat in user_sequence_feature:
+            seq_total_dim = seq_total_dim + feat["embedding_dim"]
+        if len(user_sequence_feature) != 0:
+            self.seq_encoder = SequenceEncoder(
+                featrue_config_list=user_sequence_feature,
+                model_dim=64,
+                max_seq_len=20
+            )
+        
+        self.total_embed_dim = sparse_total_dim + dense_total_dim + seq_total_dim
 
         self.mlp = MLP_Tower(
-            input_dim=self.total_input_dim,
+            input_dim=self.total_embed_dim, 
             hidden_dims=mlp_hidden_dims,
             output_dim=output_dims,
-            dropout=dropout
+            dropout=dropout_cfg
         )
     
-    def forward(
-            self, 
-            # Sparse user features
-            user_id, gender, age, occup, zip_code, year, month, hour, weekday, 
-            # Dense user features
-            user_activity, 
-            # Sequence user features
-            hist_movie_ids, hist_genre_ids):
-        
+    def forward(self, input_dict):
         """
-        Forward pass of the user tower.
-
-        Encodes static user profile features, temporal context features, 
-        and historical behavior sequences into a unified user representation.
-        
-        Args:
-            user_id (torch.LongTensor): Tensor of shape (batch_size,) containing user ID indices.
-            gender (torch.LongTensor): Tensor of shape (batch_size,) containing encoded gender features.
-            age (torch.LongTensor): Tensor of shape (batch_size,) containing encoded age group indices.
-            occup (torch.LongTensor): Tensor of shape (batch_size,) containing encoded occupation indices.
-            zip_code (torch.LongTensor): Tensor of shape (batch_size,) containing encoded ZIP code indices.
-            year (torch.LongTensor): Tensor of shape (batch_size,) representing the year of interaction.
-            month (torch.LongTensor): Tensor of shape (batch_size,) representing the month of interaction.
-            hour (torch.LongTensor): Tensor of shape (batch_size,) representing the hour of interaction.
-            weekday (torch.LongTensor): Tensor of shape (batch_size,) representing the weekday of interaction.
-            user_activity (torch.FloatTensor): Tensor of shape (batch_size, activity_dim) representing user-level activity statistics.
-            hist_movie_ids (torch.LongTensor): Tensor of shape (batch_size, seq_len) containing historical movie IDs.
-            hist_genre_ids (torch.LongTensor): Tensor of shape (batch_size, seq_len) containing genre IDs corresponding to the historical movies.
-
-        Returns:
-            torch.FloatTensor: Output tensor of shape (batch_size, output_dim).
-            This represents the final embedding of the user. 
+        :param input_dict: Feature dictionary. 
+            Input example:{sparse_feature: {feature_id:torch.Tensor, ...}, dense_feature:{feature_id:torch.Tensor, ...}, seq_feature:{feature_id:torch.Tensor, ...}}
         """
-                
-
-        seq_vec = self.seq_encoder(hist_movie_ids, hist_genre_ids)
-        user_vec = self.user_id_emb(user_id)
-        gender_vec = self.gender_emb(gender)
-        age_vec = self.age_emb(age)
-        occup_vec = self.occup_emb(occup)
-        zip_vec = self.zip_emb(zip_code)
-        year_vec = self.year_emb(year)
-        month_vec = self.month_emb(month)
-        hour_vec = self.hour_emb(hour)
-        weekday_vec = self.weekday_emb(weekday)
-
-
-        user_act_vec = F.relu(self.user_act_proj(user_activity.view(-1, 1).float()))
-
-        combined_vec = torch.cat([user_vec, gender_vec, age_vec, occup_vec, zip_vec, year_vec, month_vec, hour_vec, weekday_vec, user_act_vec, seq_vec], dim=1)
-        output = self.mlp(combined_vec)
+        # Sparse features
+        feature_embs = []
+        sparse_feature = input_dict.get('sparse_feature', None)
+        if sparse_feature is not None:
+            for feature_id, data in sparse_feature.items():
+                if feature_id in self.embeddings:
+                    emb = self.embeddings[feature_id](data)
+                    feature_embs.append(emb)
+        # Dense features
+        dense_feature = input_dict.get('dense_feature', None)
+        if dense_feature is not None:
+            for feature_name, data in dense_feature.items():
+                if feature_name in self.embeddings:
+                    emb = self.embeddings[feature_name](data)
+                    feature_embs.append(emb)
+        
+        seq_feature_dict = input_dict.get('seq_feature', None)
+        if self.seq_encoder is not None and seq_feature_dict is not None:
+            seq_emb = self.seq_encoder(seq_feature_dict)
+            feature_embs.append(seq_emb)
+        
+        if not feature_embs:
+            raise RuntimeError("UserTower received an empty valid feature. Please check if the Input Dictionary and Config match")
+        
+        concat_emb = torch.cat(feature_embs, dim=1)
+        output = self.mlp(concat_emb)
         return output
-
 
 
 
