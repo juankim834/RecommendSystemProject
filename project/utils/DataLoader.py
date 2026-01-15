@@ -17,6 +17,11 @@ class RecommendationDataset(Dataset):
         self.cfg = cfg
         if len(cfg) == 0:
             raise RuntimeError("Config loading failed, no items in config, do you need to run config_utils.py to dump sample config?")
+        self.hard_neg_cfg = raw_cfg.get("hard_negatives", {})
+        self.use_hard_negatives = self.hard_neg_cfg.get("enabled", False)
+        
+        self.num_hard_negatives = self.hard_neg_cfg.get("num_negatives", 5)
+        
         self.data = pd.read_pickle(pkl_path)
     
     def __len__(self):
@@ -28,7 +33,10 @@ class RecommendationDataset(Dataset):
         for tower_name, tower_config in self.cfg.items():
             tower_seq_len = tower_config.get("transformer_parameters", {}).get("max_seq_len", 20)
             data_dict[tower_name] = self._get_tower_meta(row, tower_config, tower_seq_len)
-            
+        
+        if self.use_hard_negatives:
+            data_dict['hard_negatives'] = self._get_hard_negatives(row)
+
         return data_dict
 
     
@@ -72,6 +80,42 @@ class RecommendationDataset(Dataset):
             data_dict["seq_feature"] = feat_data_dict
             
         return data_dict
+    
+    def _get_hard_negatives(self, row):
+        """
+        Load hard negative samples from the row
+        
+        Returns:
+            dict with hard negative data based on config
+        """
+        hard_neg_dict = {}
+        
+        # Get the field name from config (default: 'hard_neg_ids')
+        field_name = self.hard_neg_cfg.get("field_name", "hard_neg_ids")
+        
+        # Load hard negative IDs
+        hard_neg_ids = row.get(field_name, [0] * self.num_hard_negatives)
+        hard_neg_ids = list(hard_neg_ids)
+        
+        # Ensure correct length
+        if len(hard_neg_ids) > self.num_hard_negatives:
+            hard_neg_ids = hard_neg_ids[:self.num_hard_negatives]
+        elif len(hard_neg_ids) < self.num_hard_negatives:
+            hard_neg_ids = hard_neg_ids + [0] * (self.num_hard_negatives - len(hard_neg_ids))
+        
+        hard_neg_dict['ids'] = torch.tensor(hard_neg_ids, dtype=torch.long)
+        
+        # Load additional features for hard negatives if configured
+        additional_features = self.hard_neg_cfg.get("additional_features", [])
+        for feature_name in additional_features:
+            feature_field = f"hard_neg_{feature_name}"
+            if feature_field in row:
+                feature_data = row[feature_field]
+                # Assuming these are also lists/sequences
+                if isinstance(feature_data, list):
+                    hard_neg_dict[feature_name] = torch.tensor(feature_data, dtype=torch.long)
+        
+        return hard_neg_dict
     
     def feature_id_loader(self, feature_type, cfg):
         feature_list = cfg.get(feature_type, [])
