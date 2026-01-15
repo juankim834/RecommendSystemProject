@@ -1,14 +1,15 @@
 two_tower:
   user_tower:
-    mlp_hidden_dim: [128, 64]
-    output_dims: 32
+    mlp_hidden_dim: [256, 128]
+    output_dims: 64
     dropout: 0.1
     embedding_dim: 32
     transformer_parameters:
       max_seq_len: 20
       n_head: 4
-      n_layers: 2
-      dropout: 0.1
+      n_layers: 3
+      dropout: 0.15
+      FFN_dim: 256
     sparse_features:
     - name: user_id_enc
       vocab_size: 6060
@@ -53,8 +54,8 @@ two_tower:
       pooling: mean
   
   item_tower:
-    mlp_hidden_dim: [128, 64]
-    output_dims: 32
+    mlp_hidden_dim: [256, 128]
+    output_dims: 64
     dropout: 0.1
     embedding_dim: 32
     transformer_parameters:
@@ -79,9 +80,15 @@ two_tower:
       vocab_size: 25
       embedding_dim: 8
       padding_idx: 0
-      pooling: sum
+
+hard_negatives:
+  enabled: True
+  num_negatives: 5
+  field_name: hard_neg_ids
+  additional_features: [] 
+
 train:
-  batch_size: 512
+  batch_size: 768
   epochs: 50
   learning_rate: 0.005
   device: cuda
