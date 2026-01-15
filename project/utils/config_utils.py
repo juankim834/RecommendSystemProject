@@ -25,7 +25,7 @@ def save_config(config_dict, path):
 
     with open(path, 'w', encoding='utf-8') as f:
         yaml.safe_dump(config_dict, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
-    print(f"✅ Configuration saved to {path}")
+    print(f"Configuration saved to {path}")
 
 def generate_default_config(save_path='config/default_config.yaml'):
     """
@@ -36,9 +36,9 @@ def generate_default_config(save_path='config/default_config.yaml'):
             # === User Tower Config ===
             "user_tower": {
                 "mlp_hidden_dim": [256, 128],
-                "output_dims": 64,
+                "output_dims": 32,
                 "dropout": 0.1,
-                "embedding_dim": 64,
+                "embedding_dim": 32,
                 
                 # Transformer
                 "transformer_parameters": {
@@ -69,6 +69,7 @@ def generate_default_config(save_path='config/default_config.yaml'):
                 "dropout": 0.1,
                 "embedding_dim": 64,
 
+
                 "sparse_features": [
                     {"name": "item_id", "vocab_size": 5000, "embedding_dim": 64},
                     {"name": "category_id", "vocab_size": 100, "embedding_dim": 64}
@@ -86,8 +87,7 @@ def generate_default_config(save_path='config/default_config.yaml'):
             "epochs": 10,
             "learning_rate": 1e-3,
             "device": "cuda",
-            "temperature": 0.1, # Softmax Temperature
-            "pkl_path": "./data/train_data.pkl"
+            "temperature": 0.1
         }
     }
 
