@@ -3,6 +3,20 @@ from tqdm import tqdm
 import torch.nn.functional as F
 
 def to_device(data, device):
+    """
+    Recursively moves data to the specified PyTorch device.
+
+    This utility function handles complex nested data structures commonly found 
+    in batches (e.g., dictionaries of tensors, lists of tensors). It leaves 
+    non-Tensor data types (integers, strings, None) unchanged.
+
+    :param data: The input data. Can be a torch.Tensor, a dictionary, a list, 
+                 or a nested combination of these.
+    :param device: The target device (e.g., 'cpu', 'cuda', 'cuda:0', or a torch.device object).
+    
+    :return: The same data structure as the input, with all contained Tensors moved 
+             to the specified device.
+    """
     if isinstance(data, torch.Tensor):
         return data.to(device)
     elif isinstance(data, dict):
@@ -14,6 +28,25 @@ def to_device(data, device):
 
 
 def train_one_epoch(model, loader, optimizer, device, scheduler = None):
+    """
+    Trains the model for a single epoch.
+
+    This function iterates through the provided `loader`, performs the forward pass 
+    (generating user and item embeddings), calculates the loss, and updates the 
+    model parameters via backpropagation.
+
+    :param model: The neural network model to train. It must return a tuple of 
+                  (user_embeddings, item_embeddings) in the forward pass and have 
+                  a `compute_loss` method.
+    :param loader: The DataLoader containing the training data batches.
+    :param optimizer: The PyTorch optimizer (e.g., Adam, SGD) used to update weights.
+    :param device: The device to run the training on (e.g., 'cpu', 'cuda', 'cuda:0').
+    :param scheduler: (Optional) A learning rate scheduler. If provided, `scheduler.step()` 
+                      will be called after every batch (useful for OneCycleLR or Warmup schedulers).
+                      Defaults to None.
+
+    :return: The average loss for this epoch (total_loss / number_of_batches).
+    """
     model.train()
     total_loss = 0
     
@@ -48,6 +81,30 @@ def _tensor_getter(item_batch, dir):
 def validate(model, loader, item_loader, device, k_list=[10, 20], 
              item_id_in_tower_batch_dir=["item_tower", "sparse_feature", "movie_id_enc"],
              item_id_direction=["sparse_feature", "movie_id_enc"]):
+    
+    """
+    Evaluates the two-tower retrieval model on the validation set.
+
+    This function performs two main steps:
+    1. Pre-computes embeddings for all candidate items using `item_loader`.
+    2. Iterates through the validation `loader` to compute loss and Recall@K metrics.
+       It performs exhaustive search (exact nearest neighbor) for metric calculation.
+
+    :param model: The two-tower model instance. Must contain `item_tower` submodule and `compute_loss` method.
+    :param loader: DataLoader for the validation set (contains user-item interaction pairs).
+    :param item_loader: DataLoader for the candidate item set (contains all unique items).
+    :param device: The device to run the validation on (e.g., 'cpu', 'cuda:0').
+    :param k_list: A list of integers specifying the 'K' values for Recall@K metric (default: [10, 20]).
+    :param item_id_in_tower_batch_dir: A list of keys representing the path to locate the ground-truth Item IDs 
+                                       within the validation batch dictionary (used by `_tensor_getter`).
+    :param item_id_direction: A list of keys representing the path to locate the Item IDs 
+                              within the candidate item batch dictionary (used by `_tensor_getter`).
+    
+    :return: A tuple containing:
+             - average_loss (float): The average loss over the validation set.
+             - recall_dict (Dict[int, float]): A dictionary mapping K to the Recall@K score.
+    """
+
     model.eval()
     total_loss = 0
     total_recall = {k: 0.0 for k in k_list}
