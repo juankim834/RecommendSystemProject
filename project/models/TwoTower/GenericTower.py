@@ -44,7 +44,11 @@ class GenericTower(nn.Module):
             origin_dim = feat["dim"]
             embedding_dim = feat["embedding_dim"]
 
-            self.embeddings[name] = nn.Linear(origin_dim, embedding_dim)
+            self.embeddings[name] = nn.Sequential(
+                nn.Linear(origin_dim, embedding_dim),
+                nn.LayerNorm(embedding_dim),
+                nn.ReLU()
+            )
             dense_total_dim = dense_total_dim + embedding_dim
         
         # Initializing Sequence features
@@ -104,6 +108,7 @@ class GenericTower(nn.Module):
                     emb = self.embeddings[feature_name](data)
                     feature_embs.append(emb)
         
+        # Sequence features
         seq_feature_dict = input_dict.get('seq_feature', None)
         if self.seq_encoder is not None and seq_feature_dict is not None:
             seq_emb = self.seq_encoder(seq_feature_dict)
