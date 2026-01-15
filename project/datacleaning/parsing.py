@@ -102,6 +102,8 @@ def get_padded_genres(genre_list):
 padded_movie_genre_dict = {k: get_padded_genres(v) for k, v in movie_genre_dict.items()}
 
 ratings['genre_ids'] = ratings['movie_id_enc'].map(padded_movie_genre_dict)
+movies['genre_ids'] = movies['movie_id_enc'].map(padded_movie_genre_dict)
+movies.to_pickle("./data/cleaned/item_set.pkl")
 
 ratings = ratings.merge(
     movies[['movie_id', 'release_year']], 
@@ -157,7 +159,7 @@ def generate_history_movies(group):
             if len(hist) > 20:
                 hist = hist[-20:]
             else:
-                hist = [0] * (20 - len(hist)) + hist
+                hist = hist + [0] * (20 - len(hist))
             hist_movie.append(hist)
     
     group['hist_movie_ids'] = hist_movie
