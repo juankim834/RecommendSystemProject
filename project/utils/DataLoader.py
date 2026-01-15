@@ -17,14 +17,13 @@ class RecommendationDataset(Dataset):
         self.cfg = cfg
         if len(cfg) == 0:
             raise RuntimeError("Config loading failed, no items in config, do you need to run config_utils.py to dump sample config?")
-        data_raw = pd.read_pickle(pkl_path)
-        self.data = data_raw.to_dict('records')
+        self.data = pd.read_pickle(pkl_path)
     
     def __len__(self):
         return len(self.data)
     
     def __getitem__(self, idx):
-        row = self.data[idx]
+        row = self.data.iloc[idx]
         data_dict = {}
         for tower_name, tower_config in self.cfg.items():
             tower_seq_len = tower_config.get("transformer_parameters", {}).get("max_seq_len", 20)
