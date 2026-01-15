@@ -110,7 +110,7 @@ class GenericTower(nn.Module):
         
         # Sequence features
         seq_feature_dict = input_dict.get('seq_feature', None)
-        if self.seq_encoder is not None and seq_feature_dict is not None:
+        if self.seq_encoder is not None:
             seq_emb = self.seq_encoder(seq_feature_dict)
             feature_embs.append(seq_emb)
         
