@@ -41,9 +41,14 @@ class SequenceEncoder(nn.Module):
         padding_mask = (main_seq == 0)
 
         seq_emb = self.feature_embedder(input_dict)
+        seq_len = seq_emb.size(1)
+
+        causal_mask = torch.triu(torch.ones(seq_len, seq_len) * float('-inf'), diagonal=1)
+        causal_mask = causal_mask.to(seq_emb.device)
 
         context_emb = self.transformer_backbone(
             src = seq_emb, 
+            mask = causal_mask,
             src_key_padding_mask = padding_mask
         )
 
