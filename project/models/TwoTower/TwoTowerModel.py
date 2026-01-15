@@ -21,9 +21,6 @@ class TwoTowerModel(nn.Module):
         user_emb = self.user_tower(user_inputs)
         item_emb = self.item_tower(item_inputs)
 
-        user_emb = F.normalize(user_emb, p=2, dim=1)
-        item_emb = F.normalize(item_emb, p=2, dim=1)
-
         return user_emb, item_emb
     
     def predict(self, batch_data):
