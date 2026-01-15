@@ -32,8 +32,30 @@ class TwoTowerModel(nn.Module):
         # shape: [batch_size]
         scores = (user_emb * item_emb).sum(dim=1) 
         return scores
+    
+    def get_item_embeddings(self, item_ids):
 
-    def compute_loss(self, user_emb, item_emb):
+        """
+        Get item embeddings for given item IDs (for hard negatives)
+        
+        Args:
+            item_ids: tensor of shape [N] containing item IDs
+            
+        Returns:
+            item_emb: tensor of shape [N, emb_dim]
+        """
+
+        item_inputs = {
+            'sparse_feature': {
+                'movie_id_enc': item_ids
+            },
+            'dense_feature': {},
+            'seq_feature': {}
+        }
+        item_emb = self.item_tower(item_inputs)
+        return item_emb
+
+    def compute_loss(self, user_emb, item_emb, hard_neg_emb=None):
         """
         Use In-batch negatives to compute loss
         
@@ -44,8 +66,20 @@ class TwoTowerModel(nn.Module):
             raise RuntimeError("Found NaN in User Embedding")
         if torch.isnan(item_emb).any():
             raise RuntimeError("Found NaN in Item Embedding")
-
-        logits = torch.matmul(user_emb, item_emb.transpose(0, 1))
+        
+        if hard_neg_emb is not None:
+            if torch.isnan(hard_neg_emb).any():
+                raise RuntimeError("Found NaN in Hard Negative Embedding")
+            
+            in_batch_logits = torch.matmul(user_emb, item_emb.transpose(0, 1))
+            
+            hard_neg_logits = torch.bmm(
+                user_emb.unsqueeze(1),
+                hard_neg_emb.transpose(1, 2)
+            ).squeeze(1)
+            logits = torch.cat([in_batch_logits, hard_neg_logits], dim=1)
+        else:
+            logits = torch.matmul(user_emb, item_emb.transpose(0, 1))
 
         logits = logits / self.temperature
 
