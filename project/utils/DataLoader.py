@@ -17,7 +17,7 @@ class RecommendationDataset(Dataset):
         self.cfg = cfg
         if len(cfg) == 0:
             raise RuntimeError("Config loading failed, no items in config, do you need to run config_utils.py to dump sample config?")
-        self.hard_neg_cfg = raw_cfg.get("hard_negatives", {})
+        self.hard_neg_cfg = raw_cfg.get("hard_negatives", None)
         self.use_hard_negatives = self.hard_neg_cfg.get("enabled", False)
         
         self.num_hard_negatives = self.hard_neg_cfg.get("num_negatives", 5)
@@ -91,8 +91,10 @@ class RecommendationDataset(Dataset):
         hard_neg_dict = {}
         
         # Get the field name from config (default: 'hard_neg_ids')
-        field_name = self.hard_neg_cfg.get("field_name", "hard_neg_ids")
-        
+        field_name = self.hard_neg_cfg.get("field_name", {})
+        if len(field_name) == 0:
+            raise AttributeError("No hard negative field name is provided.")
+
         # Load hard negative IDs
         hard_neg_ids = row.get(field_name, [0] * self.num_hard_negatives)
         hard_neg_ids = list(hard_neg_ids)
@@ -118,6 +120,16 @@ class RecommendationDataset(Dataset):
         return hard_neg_dict
     
     def feature_id_loader(self, feature_type, cfg):
+
+        """
+        Helper function autimatically load feature id from config.
+        
+        :param feature_type: String 
+        Specify the feature that is going to load
+        :param cfg: dict
+        Config dictionary load from the config file, it has to be the tower config dictionary, not all of the config dictionary.
+        """
+
         feature_list = cfg.get(feature_type, [])
         
         if not feature_list:
