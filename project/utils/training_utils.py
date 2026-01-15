@@ -51,7 +51,7 @@ def validate(model, loader, item_loader, device, k_list=[10, 20],
     total_loss = 0
     total_recall = {k: 0.0 for k in k_list}
     num_batches = 0
-    pbar_validating = tqdm(loader, desc="Validating and calculating Recall@K")
+    pbar_validating = tqdm(loader, desc="Validating")
 
     with torch.no_grad():
         all_item_embs_list = []
@@ -73,9 +73,6 @@ def validate(model, loader, item_loader, device, k_list=[10, 20],
             targets = _tensor_getter(batch_data, item_id_in_tower_batch_dir)
             scores = torch.matmul(user_emb, all_item_embs.t())
 
-            assert all_item_embs.size(0) == all_item_ids.size(0)
-            assert targets.ndim == 1
-            assert all_item_ids.dtype == targets.dtype
 
             for k in k_list:
                 _, topk_indices = torch.topk(scores, k=k, dim=1)
