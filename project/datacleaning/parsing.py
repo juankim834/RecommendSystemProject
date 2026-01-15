@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 from sklearn.preprocessing import LabelEncoder
+import random
 
 
 movies = pd.read_csv(
@@ -115,7 +116,6 @@ ratings = ratings.merge(
 # Rating label 0 or 1, meaning a positive view of this rating activity. 
 Threshold = 3
 ratings['label'] = ratings['rating'].apply(lambda x: 1 if x >= Threshold else 0)
-ratings = ratings.loc[ratings['label'] == 1]
 
 # Time features processing
 ratings['timestamp_dt'] = pd.to_datetime(ratings['timestamp'], unit='s')
@@ -145,29 +145,103 @@ ratings = ratings.sort_values(by=['user_id_enc', 'timestamp']).reset_index(drop=
 from tqdm import tqdm
 tqdm.pandas()
 
-# Generate user's past 20 movies id list before this rating comment
-def generate_history_movies(group):
-    # Group: All the movement of a user
+# Generate user's past 20 positive movies id list before this rating comment
+def generate_history_and_negatives(group, all_movie_ids, num_negatives=5, use_actual_negatives=True):
+    """
+    Generate history and hard negatives
+    
+    Args:
+        group: User's rating history (sorted by time)
+        all_movie_ids: Set of all valid movie IDs (1 to max_id, excluding 0)
+        num_negatives: Number of negative samples for positive ratings
+        use_actual_negatives: Whether to use user's actual negative ratings
+    
+    Note: Assumes movie_id_enc starts from 1, with 0 reserved for padding
+          Padding is added at the END of history sequences
+    """
     movie_id_list = group['movie_id_enc'].tolist()
+    label_list = group['label'].tolist()
+    
     hist_movie = []
-
+    hard_negatives = []
+    
     for i in range(len(movie_id_list)):
+        # Build history
         if i == 0:
-            hist_movie.append([0]*20)
+            hist = [0] * 20
+            interacted_before = set()
+            negative_movies = []
         else:
             hist = movie_id_list[:i]
             if len(hist) > 20:
-                hist = hist[-20:]
+                hist = hist[-20:]  # Take last 20
             else:
-                hist = hist + [0] * (20 - len(hist))
-            hist_movie.append(hist)
+                hist = hist + [0] * (20 - len(hist))  # Pad at the END
+            
+            interacted_before = set(movie_id_list[:i])
+            
+            # Collect user's actual negative ratings before this point
+            negative_movies = [
+                movie_id_list[j] for j in range(i) 
+                if label_list[j] == 0 and movie_id_list[j] != 0  # Exclude padding
+            ]
+        
+        hist_movie.append(hist)
+        
+        # Only generate hard negatives for positive samples
+        if label_list[i] == 1:
+            if use_actual_negatives and len(negative_movies) > 0:
+                # Prefer using actual negative ratings as hard negatives
+                if len(negative_movies) >= num_negatives:
+                    negs = random.sample(negative_movies, num_negatives)
+                else:
+                    # Mix actual negatives with random unseen movies
+                    negs = negative_movies.copy()
+                    remaining = num_negatives - len(negs)
+                    
+                    # Available = all movies - interacted - current positive
+                    available = list(all_movie_ids - interacted_before - {movie_id_list[i]})
+                    
+                    if len(available) >= remaining:
+                        negs.extend(random.sample(available, remaining))
+                    else:
+                        negs.extend(available)
+                        negs.extend([0] * (num_negatives - len(negs)))
+            else:
+                # Use random unseen movies
+                available = list(all_movie_ids - interacted_before - {movie_id_list[i]})
+                if len(available) >= num_negatives:
+                    negs = random.sample(available, num_negatives)
+                else:
+                    negs = available + [0] * (num_negatives - len(available))
+        else:
+            # For negative samples, use padding (0)
+            negs = [0] * num_negatives
+        
+        hard_negatives.append(negs)
     
     group['hist_movie_ids'] = hist_movie
+    group['hard_neg_ids'] = hard_negatives
+    
     return group
+
+all_movie_ids = set(ratings['movie_id_enc'].unique())
 
 print("Generating history movies features...")
 
-ratings = ratings.groupby('user_id_enc', as_index=False).progress_apply(generate_history_movies)
+ratings = ratings.groupby('user_id', group_keys=False).progress_apply(
+    lambda x: generate_history_and_negatives(
+        x, all_movie_ids, num_negatives=5, use_actual_negatives=True
+    )
+)
+
+# FILTER TO ONLY POSITIVE SAMPLES
+print(f"\nTotal samples before filtering: {len(ratings)}")
+print(f"Positive samples: {(ratings['label'] == 1).sum()}")
+print(f"Negative samples: {(ratings['label'] == 0).sum()}")
+
+ratings = ratings[ratings['label'] == 1].copy()
+print(f"Samples after filtering (positive only): {len(ratings)}")
 
 padded_movie_genre_dict[0] = [0, 0, 0]
 
