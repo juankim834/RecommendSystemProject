@@ -3,11 +3,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class TwoTowerModel(nn.Module):
-    def __init__(self, user_tower, item_tower, temperature=0.1):
+    def __init__(self, user_tower, item_tower):
         super().__init__()
         self.user_tower = user_tower
         self.item_tower = item_tower
-        self.temperature = temperature
 
     def forward(self, batch_data):
         """
@@ -55,7 +54,7 @@ class TwoTowerModel(nn.Module):
         item_emb = self.item_tower(item_inputs)
         return item_emb
 
-    def compute_loss(self, user_emb, item_emb, hard_neg_emb=None):
+    def compute_loss(self, user_emb, item_emb, hard_neg_emb=None, temperature = 0.1):
         """
         Use In-batch negatives to compute loss
         
@@ -67,9 +66,14 @@ class TwoTowerModel(nn.Module):
         if torch.isnan(item_emb).any():
             raise RuntimeError("Found NaN in Item Embedding")
         
+        batch_size = user_emb.shape[0]
+        
         if hard_neg_emb is not None:
             if torch.isnan(hard_neg_emb).any():
                 raise RuntimeError("Found NaN in Hard Negative Embedding")
+            
+            assert hard_neg_emb.dim() == 3, f"Expected shape [B, N, D], got {hard_neg_emb.shape}"
+            assert hard_neg_emb.size(0) == batch_size, "Batch size mismatch"
             
             in_batch_logits = torch.matmul(user_emb, item_emb.transpose(0, 1))
             
@@ -81,11 +85,19 @@ class TwoTowerModel(nn.Module):
         else:
             logits = torch.matmul(user_emb, item_emb.transpose(0, 1))
 
-        logits = logits / self.temperature
+        logits = logits / temperature
 
         batch_size = user_emb.shape[0]
         labels = torch.arange(batch_size).to(user_emb.device)
         loss = F.cross_entropy(logits, labels)
+
+        # with torch.no_grad():
+        #     # Check if positive scores are higher than negative scores
+        #     pos_scores = logits[torch.arange(batch_size), labels]  # Diagonal
+        #     neg_scores_mean = (logits.sum(dim=1) - pos_scores) / (logits.size(1) - 1)
+            
+        #     # Helpful for debugging - you can log these
+        #     # print(f"Pos score mean: {pos_scores.mean():.3f}, Neg score mean: {neg_scores_mean.mean():.3f}")
 
         return loss
     
