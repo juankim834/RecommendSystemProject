@@ -23,12 +23,16 @@ learning_rate = cfg.get("train", {}).get("learning_rate", 5e-4)
 batch_size = cfg.get("train", {}).get("batch_size", 1024)
 temperature = cfg.get("train", {}).get("temperature", 0.07)
 DEVICE = cfg.get("train", {}).get("device", "cuda")
+min_delta = cfg.get("train", {}).get("min_delta", 1e-4)
+save_standard = cfg.get("train", {}).get("save_standard", "loss")
+patience = cfg.get("train", {}).get("patience", 5)
+
 if torch.cuda.is_available() == False and DEVICE == "cuda":
     raise RuntimeError("Cuda is not available")
 user_tower = GenericTower(cfg, "user_tower")
 item_tower = GenericTower(cfg, "item_tower")
 
-model = TwoTowerModel(user_tower, item_tower, temperature=temperature).to(DEVICE)
+model = TwoTowerModel(user_tower, item_tower).to(DEVICE)
 
 train_dataset = RecommendationDataset(CONFIG_PATH, PKL_PATH_TRAIN)
 val_dataset = RecommendationDataset(CONFIG_PATH, PKL_PATH_VAL)
@@ -41,29 +45,49 @@ item_loader = DataLoader(item_dataset, batch_size=1024, shuffle=False)
 
 optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
-total_step = len(train_loader) * epochs
-warmup_step = int(total_step * 0.1)
-scheduler = get_cosine_schedule_with_warmup(optimizer, num_training_steps=total_step, num_warmup_steps=warmup_step)
+# total_step = len(train_loader) * epochs
+# warmup_step = int(total_step * 0.02)
+# scheduler = get_cosine_schedule_with_warmup(optimizer, num_training_steps=total_step, num_warmup_steps=warmup_step)
+
+temperature_scheduler = {
+
+}
+
 
 print(f"Start training on {DEVICE}...")
 if __name__ == '__main__':
-    patience = 5
-    min_delta = 1e-4
     best_val_loss = float('inf')
+    best_acc = {10:0, 20:0}
     patience_counter = 0
     save_dir = './project/models/TwoTower/'
     os.makedirs(save_dir, exist_ok=True)
 
     for epoch in range(epochs):
-        train_loss = train_one_epoch(model, train_loader, optimizer, DEVICE, scheduler=scheduler)
-        val_loss, acc = validate(model, val_loader, item_loader, DEVICE)
+
+        train_loss = train_one_epoch(model, train_loader, optimizer, DEVICE, scheduler = None, item_loader = item_loader, temperature=temperature)
+        val_loss, acc = validate(model, val_loader, item_loader, DEVICE, epoch, log_embeddings=True)
+        torch.cuda.empty_cache()
+        save_indicator = False
+        
+        if save_standard == "loss":
+            if val_loss < best_val_loss - min_delta:
+                save_indicator = True
+        if save_standard == "10K":
+            if acc[10] > best_acc[10] + min_delta:
+                save_indicator = True
+                best_acc = acc
+        if save_standard == "20K":
+            if acc[20] > best_acc[20] + min_delta:
+                save_indicator = True
+                best_acc = acc
+
+
 
         print(f"    Epoch [{epoch+1}/{epochs}] - Train Loss: {train_loss:.4f} - Val Loss: {val_loss:.4f}")
         for k, acccuracy in acc.items():
             print(f"        Recall@{k} accuracy: {acccuracy:.4f}")
 
-        if val_loss < best_val_loss - min_delta:
-            best_val_loss = val_loss
+        if save_indicator:
             patience_counter = 0
             checkpoint = {
                 'epoch': epoch,
@@ -73,7 +97,7 @@ if __name__ == '__main__':
                 'recall_k': acc
             }
             torch.save(checkpoint, os.path.join(save_dir, "best_model.pth"))
-            print(f"  Validation loss improved. Model saved.")
+            print(f"  Model improved. Model saved.")
         else:
             patience_counter += 1
             print(f"  No improvement. Patience: {patience_counter}/{patience}")
