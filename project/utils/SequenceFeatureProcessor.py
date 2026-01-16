@@ -1,8 +1,9 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 class SequenceFeatureProcessor(nn.Module):
-    def __init__(self, feature_config_list, target_dim, max_seq_len):
+    def __init__(self, feature_config_list, target_dim, max_seq_len, dropout=0.1):
         """
         :param feature_config_list: sequence_features (List of Dicts)
         :param target_dim: Dimensions of model (d_model)
@@ -11,9 +12,9 @@ class SequenceFeatureProcessor(nn.Module):
         super().__init__()
         self.feature_config_list = feature_config_list
         self.target_dim = target_dim
-        
+        self.dropout = dropout
         self.embeddings = nn.ModuleDict()
-        
+        total_concat_dim = 0
         for feat_cfg in feature_config_list:
             feat_name = feat_cfg['name']
             vocab_size = feat_cfg['vocab_size']
@@ -26,8 +27,12 @@ class SequenceFeatureProcessor(nn.Module):
                 embedding_dim=emb_dim, 
                 padding_idx=padding_idx
             )
-            if emb_dim != target_dim:
-                self.embeddings[feat_name + "_proj"] = nn.Linear(emb_dim, target_dim)
+            total_concat_dim += emb_dim
+        
+        self.feature_projection = nn.Sequential(
+            nn.Linear(total_concat_dim, target_dim),
+            nn.Dropout(dropout)
+        )
         self.pos_emb = nn.Embedding(max_seq_len, target_dim)
 
     def forward(self, input_dict):
@@ -37,7 +42,7 @@ class SequenceFeatureProcessor(nn.Module):
         # batch_size = next(iter(input_dict.values())).shape[0]
         device = next(iter(input_dict.values())).device
         
-        total_emb = None
+        emb_list = []
 
         for feat_cfg in self.feature_config_list:
             name = feat_cfg['name']
@@ -45,7 +50,7 @@ class SequenceFeatureProcessor(nn.Module):
             
             # Data Input
             if name not in input_dict:
-                print(f"Unable to find {name} in the input dictionary, {name} has skipped")
+                print(f"Configuration Error: Unable to find {name} in the input dictionary, {name} has skipped")
                 continue
             x = input_dict[name]
             
@@ -53,11 +58,8 @@ class SequenceFeatureProcessor(nn.Module):
             # [Batch, Seq](Normal Sequence) -> emb -> [Batch, Seq, Dim]
             # [Batch, Seq, Tags] (Multi number sequence) -> emb -> [Batch, Seq, Tags, Dim]
             emb = self.embeddings[name](x)
-            
-            if name + "_proj" in self.embeddings:
-                emb = self.embeddings[name + "_proj"](emb)
 
-            # Pooling Processing
+            # Pooling Processing for multi-value features
             # Transform [Batch, Seq, Tags, Dim] into [Batch, Seq, Dim
             if x.dim() == 3:
                 if pooling_type == 'mean':
@@ -65,19 +67,20 @@ class SequenceFeatureProcessor(nn.Module):
                 elif pooling_type == 'sum':
                     emb = torch.sum(emb, dim=2)
 
-            # Mixing all the feature
-            if total_emb is None:
-                total_emb = emb
-            else:
-                total_emb = total_emb + emb
+            emb_list.append(emb)
 
         # total_emb shape: [Batch, Seq, Dim]
-        if total_emb is None:
+        if not emb_list:
             raise ValueError("Configuration Error: No valid features were processed!")
         
+        concat_emb = torch.cat(emb_list, dim=-1)
+        total_emb = self.feature_projection(concat_emb)
+
         seq_len = total_emb.shape[1]
         positions = torch.arange(seq_len, device=device).unsqueeze(0) # [1, Seq]
 
         total_emb = total_emb + self.pos_emb(positions)
+        total_emb = F.dropout(total_emb, p=self.dropout, training=self.training)
         
         return total_emb
+    
