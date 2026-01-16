@@ -16,9 +16,8 @@ class ItemDataset(RecommendationDataset):
         self.cfg = cfg
         if len(cfg) == 0:
             raise RuntimeError("Config loading failed, no items in item tower config, do you need to run config_utils.py to dump sample config?")
-        data_raw = pd.read_pickle(pkl_path)
-        self.data = data_raw.to_dict('records')
+        self.data = pd.read_pickle(pkl_path)
         self.max_seq_len = max_seq_len
     def __getitem__(self, idx):
-        row = self.data[idx]
+        row = self.data.iloc[idx]
         return self._get_tower_meta(row, self.cfg, self.max_seq_len)
