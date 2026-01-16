@@ -2,8 +2,15 @@ import pandas as pd
 import numpy as np
 from sklearn.preprocessing import LabelEncoder
 import random
+import pickle
+from tqdm import tqdm
 
+tqdm.pandas()
 
+# ============================================================================
+# 1. LOAD RAW DATA
+# ============================================================================
+print("Loading raw data...")
 movies = pd.read_csv(
     './data/ml-1m/movies.dat', 
     sep='::',
@@ -17,7 +24,7 @@ users = pd.read_csv(
     './data/ml-1m/users.dat',
     sep='::',
     header=None,
-    names=['user_id', 'gender', 'age', 'occupation','zip'],
+    names=['user_id', 'gender', 'age', 'occupation', 'zip'],
     engine='python'
 )
 
@@ -29,135 +36,156 @@ ratings = pd.read_csv(
     engine='python'
 )
 
-# Release year from movie title
-movies['release_year'] = movies['title'].str.extract(r'\((\d{4})\)').astype(int)
+print(f"Raw data - Users: {len(users)}, Movies: {len(movies)}, Ratings: {len(ratings)}")
 
-# Filtering users who have less than 20 history and movies which have less than 5 history
+# ============================================================================
+# 2. FILTER DATA (min interactions)
+# ============================================================================
+print("\nFiltering sparse users/movies...")
+
+# Keep movies with at least 5 ratings
 movie_counts = ratings['movie_id'].value_counts()
 valid_movie_ids = movie_counts[movie_counts >= 5].index
 ratings = ratings[ratings['movie_id'].isin(valid_movie_ids)].copy()
 
+# Keep users with at least 20 ratings
 user_counts = ratings['user_id'].value_counts()
 valid_user_ids = user_counts[user_counts >= 20].index
 ratings = ratings[ratings['user_id'].isin(valid_user_ids)].copy()
 
+# Filter movies and users tables
 movies = movies[movies['movie_id'].isin(valid_movie_ids)].copy()
 users = users[users['user_id'].isin(valid_user_ids)].copy()
 
-# Get first three number of zipcode
-users['zip_prefix'] = users['zip'].astype(str).str[:3]
-# Encoding zipcode prefix
-lbe_zip = LabelEncoder()
-users['zip_enc'] = lbe_zip.fit_transform(users['zip_prefix']) + 1
+print(f"After filtering - Users: {len(users)}, Movies: {len(movies)}, Ratings: {len(ratings)}")
+
+# ============================================================================
+# 3. PROCESS MOVIES
+# ============================================================================
+print("\nProcessing movie features...")
+
+# Extract release year from title
+movies['release_year'] = movies['title'].str.extract(r'\((\d{4})\)').astype(float)
+
+# Process genres
+genre_set = set()
+for genres_str in movies['genres']:
+    genre_set.update(genres_str.split('|'))
+
+# Create genre vocabulary (1-indexed, 0 for padding)
+genre2int = {genre: idx + 1 for idx, genre in enumerate(sorted(genre_set))}
+
+# Convert genre strings to ID lists
+movies['genre_ids_raw'] = movies['genres'].apply(
+    lambda x: [genre2int[g] for g in x.split('|')]
+)
+
+# ============================================================================
+# 4. ENCODE IDs (1-indexed, 0 reserved for padding/unknown)
+# ============================================================================
+print("\nEncoding categorical features...")
+
+# Movie ID encoding
+lbe_movie = LabelEncoder()
+movies['movie_id_enc'] = lbe_movie.fit_transform(movies['movie_id']) + 1
+
+# User features encoding
+lbe_user = LabelEncoder()
+users['user_id_enc'] = lbe_user.fit_transform(users['user_id']) + 1
+
+lbe_gender = LabelEncoder()
+users['gender_enc'] = lbe_gender.fit_transform(users['gender']) + 1
+
+lbe_age = LabelEncoder()
+users['age_enc'] = lbe_age.fit_transform(users['age']) + 1
 
 lbe_occ = LabelEncoder()
 users['occupation_enc'] = lbe_occ.fit_transform(users['occupation']) + 1
 
-# Gender data processing
-lbe_gender = LabelEncoder()
-users['gender_enc'] = lbe_gender.fit_transform(users['gender'])
-# 0:Female, 1:Male, or otherwise, depend on sequence of fit
+# Zip code prefix (first 3 digits)
+users['zip_prefix'] = users['zip'].astype(str).str[:3]
+lbe_zip = LabelEncoder()
+users['zip_enc'] = lbe_zip.fit_transform(users['zip_prefix']) + 1
 
-# Age group processing
-lbe_age = LabelEncoder()
-users['age_enc'] = lbe_age.fit_transform(users['age']) + 1
+# ============================================================================
+# 5. BUILD MOVIE GENRE MAPPING
+# ============================================================================
+print("\nBuilding movie-genre mappings...")
 
-# Merge data into ratings
+# Create padded genre list (fixed length 3)
+def pad_genres(genre_list, max_len=3):
+    if len(genre_list) >= max_len:
+        return genre_list[:max_len]
+    return genre_list + [0] * (max_len - len(genre_list))
+
+movies['genre_ids'] = movies['genre_ids_raw'].apply(lambda x: pad_genres(x, 3))
+
+# Create mapping: movie_id_enc -> padded genre list
+movie_genre_dict_padded = dict(zip(movies['movie_id_enc'], movies['genre_ids']))
+movie_genre_dict_padded[0] = [0, 0, 0]  # For padding movie ID
+
+# Create mapping: movie_id_enc -> set of genre IDs (for hard negative matching)
+movie_genre_dict_set = dict(zip(movies['movie_id_enc'], 
+                                movies['genre_ids_raw'].apply(set)))
+movie_genre_dict_set[0] = set()  # For padding movie ID
+
+# ============================================================================
+# 6. MERGE AND ENRICH RATINGS
+# ============================================================================
+print("\nMerging features into ratings...")
+
+# Merge user features
 ratings = ratings.merge(
-    users[['user_id', 'gender_enc', 'age_enc', 'occupation_enc', 'zip_enc']], 
+    users[['user_id', 'user_id_enc', 'gender_enc', 'age_enc', 'occupation_enc', 'zip_enc']], 
     on='user_id', 
     how='left'
 )
 
-# Label Encoding
-# Mapping the incontinuous ids into continuous
-lbe_user = LabelEncoder()
-ratings['user_id_enc'] = lbe_user.fit_transform(ratings['user_id']) + 1 # Start from 1, 0 stand for unknown
-
-lbe_movie = LabelEncoder()
-ratings['movie_id_enc'] = lbe_movie.fit_transform(ratings['movie_id']) + 1
-
-# Genre Processing
-# Genre encoding
-genre_set = set()
-for x in movies['genres']:
-    genre_set.update(x.split('|'))
-genre2int = {val: ii+1 for ii, val in enumerate(genre_set)}
-
-# Map MovieID to [Genre_ID_List]
-# Transform genres in movie dataFrame into number list
-movies['genre_ids'] = movies['genres'].apply(lambda x: [genre2int[g] for g in x.split('|')])
-
-# Set up movie_id_enc -> genre_ids dictionary
-movies['movie_id_enc'] = lbe_movie.transform(movies['movie_id']) + 1
-
-# Generate a dict, example: {movie_enc_id: [1, 5, 2]}
-movie_genre_dict = dict(zip(movies['movie_id_enc'], movies['genre_ids']))
-
-# Pad all lists, make sure the length is 3
-def get_padded_genres(genre_list):
-    if len(genre_list) >= 3:
-        return genre_list[:3]
-    else:
-        return genre_list + [0] * (3 - len(genre_list))
-padded_movie_genre_dict = {k: get_padded_genres(v) for k, v in movie_genre_dict.items()}
-
-ratings['genre_ids'] = ratings['movie_id_enc'].map(padded_movie_genre_dict)
-movies['genre_ids'] = movies['movie_id_enc'].map(padded_movie_genre_dict)
-movies.to_pickle("./data/cleaned/item_set.pkl")
-
+# Merge movie features
 ratings = ratings.merge(
-    movies[['movie_id', 'release_year']], 
+    movies[['movie_id', 'movie_id_enc', 'release_year', 'genre_ids']], 
     on='movie_id',
     how='left'
 )
 
-# Label Generating
-# Rating label 0 or 1, meaning a positive view of this rating activity. 
-Threshold = 3
-ratings['label'] = ratings['rating'].apply(lambda x: 1 if x >= Threshold else 0)
+# Create binary label (rating >= 3 is positive)
+RATING_THRESHOLD = 3
+ratings['label'] = (ratings['rating'] >= RATING_THRESHOLD).astype(int)
 
-# Time features processing
+# Time features
 ratings['timestamp_dt'] = pd.to_datetime(ratings['timestamp'], unit='s')
-ratings['rating_hour'] = ratings['timestamp_dt'].dt.hour.astype(int) + 1
-ratings['rating_weekday'] = ratings['timestamp_dt'].dt.weekday.astype(int) + 1
-ratings['rating_month'] = ratings['timestamp_dt'].dt.month.astype(int)
-ratings['rating_year'] = ratings['timestamp_dt'].dt.year + 1
+ratings['rating_hour'] = ratings['timestamp_dt'].dt.hour + 1
+ratings['rating_weekday'] = ratings['timestamp_dt'].dt.weekday + 1
+ratings['rating_month'] = ratings['timestamp_dt'].dt.month
 
+# Year encoding (offset from base year)
 BASE_YEAR = 1900
-# Label Encoding for Year
-def encode_year(year_series):
-    encoded = year_series - BASE_YEAR + 1
-    encoded = encoded.fillna(0)
-    encoded[encoded < 0] = 0
-    return encoded.astype(int)
+ratings['year_enc'] = (ratings['timestamp_dt'].dt.year - BASE_YEAR + 1).astype(int)
+ratings['release_year_enc'] = (ratings['release_year'].fillna(BASE_YEAR) - BASE_YEAR + 1).astype(int)
 
-ratings['year_enc'] = encode_year(ratings['rating_year'])
-ratings['release_year_enc'] = encode_year(ratings['release_year'])
+# Sort by user and time for sequence generation
+ratings = ratings.sort_values(['user_id_enc', 'timestamp']).reset_index(drop=True)
 
-# # Calculate time lag features(Rating comment year - Movie release year)(Deprecated)
-# ratings['time_lag'] = ratings['rating_year'] - ratings['release_year']
-# ratings['time_lag'] = ratings['time_lag'].clip(lower=0)
-# ratings['time_lag_norm'] = np.log1p(ratings['time_lag'])
+print(f"Total ratings after merge: {len(ratings)}")
+print(f"Positive samples: {(ratings['label'] == 1).sum()}")
+print(f"Negative samples: {(ratings['label'] == 0).sum()}")
 
-ratings = ratings.sort_values(by=['user_id_enc', 'timestamp']).reset_index(drop=False)
+# ============================================================================
+# 7. GENERATE HISTORY & HARD NEGATIVES
+# ============================================================================
+print("\nGenerating user history and hard negatives...")
 
-from tqdm import tqdm
-tqdm.pandas()
-
-# Generate user's past 20 positive movies id list before this rating comment
-def generate_history_and_negatives(group, all_movie_ids, num_negatives=5, use_actual_negatives=True):
+def generate_history_and_negatives(group, all_movie_ids, movie_genre_map, num_negatives=10):
     """
-    Generate history and hard negatives
+    For each rating, generate:
+    - hist_movie_ids: Last 20 movies user interacted with
+    - hard_neg_ids: Same-genre movies user hasn't seen (for positive samples)
     
     Args:
-        group: User's rating history (sorted by time)
-        all_movie_ids: Set of all valid movie IDs (1 to max_id, excluding 0)
-        num_negatives: Number of negative samples for positive ratings
-        use_actual_negatives: Whether to use user's actual negative ratings
-    
-    Note: Assumes movie_id_enc starts from 1, with 0 reserved for padding
-          Padding is added at the END of history sequences
+        group: User's rating history (sorted by timestamp)
+        all_movie_ids: Set of all valid movie IDs
+        movie_genre_map: Dict mapping movie_id_enc -> set of genre_ids
+        num_negatives: Number of hard negatives per positive sample
     """
     movie_id_list = group['movie_id_enc'].tolist()
     label_list = group['label'].tolist()
@@ -166,56 +194,53 @@ def generate_history_and_negatives(group, all_movie_ids, num_negatives=5, use_ac
     hard_negatives = []
     
     for i in range(len(movie_id_list)):
-        # Build history
+        # Build history sequence
         if i == 0:
+            # First rating - no history
             hist = [0] * 20
             interacted_before = set()
-            negative_movies = []
         else:
+            # Take last 20 movies before current rating
             hist = movie_id_list[:i]
             if len(hist) > 20:
-                hist = hist[-20:]  # Take last 20
+                hist = hist[-20:]  # Keep most recent 20
             else:
-                hist = hist + [0] * (20 - len(hist))  # Pad at the END
+                hist = hist + [0] * (20 - len(hist))  # Pad to length 20
             
             interacted_before = set(movie_id_list[:i])
-            
-            # Collect user's actual negative ratings before this point
-            negative_movies = [
-                movie_id_list[j] for j in range(i) 
-                if label_list[j] == 0 and movie_id_list[j] != 0  # Exclude padding
-            ]
         
         hist_movie.append(hist)
         
-        # Only generate hard negatives for positive samples
+        # Generate hard negatives (only for positive samples)
         if label_list[i] == 1:
-            if use_actual_negatives and len(negative_movies) > 0:
-                # Prefer using actual negative ratings as hard negatives
-                if len(negative_movies) >= num_negatives:
-                    negs = random.sample(negative_movies, num_negatives)
-                else:
-                    # Mix actual negatives with random unseen movies
-                    negs = negative_movies.copy()
-                    remaining = num_negatives - len(negs)
-                    
-                    # Available = all movies - interacted - current positive
-                    available = list(all_movie_ids - interacted_before - {movie_id_list[i]})
-                    
-                    if len(available) >= remaining:
-                        negs.extend(random.sample(available, remaining))
-                    else:
-                        negs.extend(available)
-                        negs.extend([0] * (num_negatives - len(negs)))
+            current_movie = movie_id_list[i]
+            current_genres = movie_genre_map.get(current_movie, set())
+            
+            # Find unseen movies with overlapping genres
+            same_genre_unseen = [
+                mid for mid in all_movie_ids 
+                if mid not in interacted_before 
+                and mid != current_movie
+                and len(movie_genre_map.get(mid, set()) & current_genres) > 0
+            ]
+            
+            # Sample hard negatives
+            if len(same_genre_unseen) >= num_negatives:
+                negs = random.sample(same_genre_unseen, num_negatives)
             else:
-                # Use random unseen movies
-                available = list(all_movie_ids - interacted_before - {movie_id_list[i]})
-                if len(available) >= num_negatives:
-                    negs = random.sample(available, num_negatives)
+                # Mix same-genre + random unseen
+                negs = same_genre_unseen.copy()
+                remaining = num_negatives - len(negs)
+                available = list(all_movie_ids - interacted_before - {current_movie})
+                
+                if len(available) >= remaining:
+                    negs.extend(random.sample(available, remaining))
                 else:
-                    negs = available + [0] * (num_negatives - len(available))
+                    # Not enough movies - pad with zeros
+                    negs.extend(available)
+                    negs.extend([0] * (num_negatives - len(negs)))
         else:
-            # For negative samples, use padding (0)
+            # Negative samples don't need hard negatives
             negs = [0] * num_negatives
         
         hard_negatives.append(negs)
@@ -225,94 +250,102 @@ def generate_history_and_negatives(group, all_movie_ids, num_negatives=5, use_ac
     
     return group
 
+
 all_movie_ids = set(ratings['movie_id_enc'].unique())
 
-print("Generating history movies features...")
-
-ratings = ratings.groupby('user_id', group_keys=False).progress_apply(
+ratings = ratings.groupby('user_id_enc', group_keys=False).progress_apply(
     lambda x: generate_history_and_negatives(
-        x, all_movie_ids, num_negatives=5, use_actual_negatives=True
+        x, 
+        all_movie_ids, 
+        movie_genre_dict_set,  # Use set version for faster intersection
+        num_negatives=10
     )
 )
 
-# FILTER TO ONLY POSITIVE SAMPLES
-print(f"\nTotal samples before filtering: {len(ratings)}")
-print(f"Positive samples: {(ratings['label'] == 1).sum()}")
-print(f"Negative samples: {(ratings['label'] == 0).sum()}")
+# ============================================================================
+# 8. GENERATE HISTORY GENRE SEQUENCES
+# ============================================================================
+print("\nGenerating history genre features...")
+
+def convert_hist_to_genres(movie_id_list):
+    """Convert list of movie IDs to list of genre ID lists"""
+    return [movie_genre_dict_padded.get(mid, [0, 0, 0]) for mid in movie_id_list]
+
+ratings['hist_genre_ids'] = ratings['hist_movie_ids'].progress_apply(convert_hist_to_genres)
+
+# ============================================================================
+# 9. FILTER TO POSITIVE SAMPLES ONLY
+# ============================================================================
+print("\nFiltering to positive samples only...")
+print(f"Before: {len(ratings)} samples")
 
 ratings = ratings[ratings['label'] == 1].copy()
-print(f"Samples after filtering (positive only): {len(ratings)}")
 
-padded_movie_genre_dict[0] = [0, 0, 0]
+print(f"After: {len(ratings)} positive samples")
 
-# Generate user's past 20 movies' genres id list before this rating comment
-def convert_hist_movies_to_genres(movie_id_list):
-    genre_list = []
-    for movie_id in movie_id_list:
-        genres = padded_movie_genre_dict.get(movie_id, [0, 0, 0])
-        genre_list.append(genres)
-    return genre_list
+# ============================================================================
+# 10. TRAIN/VAL/TEST SPLIT
+# ============================================================================
+print("\nSplitting train/val/test...")
 
-print("Generating history genre features...")
-ratings['hist_genre_ids'] = ratings['hist_movie_ids'].progress_apply(convert_hist_movies_to_genres)
+# Rank by timestamp within each user (most recent = 1)
+ratings['rank_latest'] = ratings.groupby('user_id_enc')['timestamp'].rank(
+    method='first', 
+    ascending=False
+)
 
-# Spliting train test sets. 
-# Sorting data
-ratings['rank_latest'] = ratings.groupby(['user_id_enc'])['timestamp'].rank(method='first', ascending=False)
+# Split: last 2 interactions for val/test, rest for training
+train = ratings[ratings['rank_latest'] > 2].copy()
+val = ratings[ratings['rank_latest'] == 2].copy()
+test = ratings[ratings['rank_latest'] == 1].copy()
 
-train = ratings[ratings['rank_latest'] > 2]
-val = ratings[ratings['rank_latest'] == 2]
-test = ratings[ratings['rank_latest'] == 1]
+print(f"Train: {len(train)}, Val: {len(val)}, Test: {len(test)}")
 
-print("Calculate statistics features...")
+# ============================================================================
+# 11. COMPUTE STATISTICAL FEATURES (from train only)
+# ============================================================================
+print("\nComputing statistical features from training data...")
 
-# User Activity
+# User activity (how many ratings)
 train_user_activity = train['user_id_enc'].value_counts()
-# Movie Popularity
+
+# Movie popularity (how many times rated)
 train_movie_pop = train['movie_id_enc'].value_counts()
-# Movie Avg Rating
+
+# Movie average rating
 train_movie_avg_rate = train.groupby('movie_id_enc')['rating'].mean()
 
-# Global statistics(Use to cold startup or unknown data)
-global_avg_rating = train['rating'].mean()
-
 def add_stat_features(df):
+    """Add statistical features with log normalization"""
     df_out = df.copy()
-
-    # Mapping User Activity
-    df_out['user_activity'] = df_out['user_id_enc'].map(train_user_activity).fillna(0)
     
-    # Mapping Movie Popularity
+    # Map features
+    df_out['user_activity'] = df_out['user_id_enc'].map(train_user_activity).fillna(0)
     df_out['movie_pop'] = df_out['movie_id_enc'].map(train_movie_pop).fillna(0)
-
-    # Mapping Movie Avg Rating
     df_out['movie_avg_rate'] = df_out['movie_id_enc'].map(train_movie_avg_rate).fillna(0)
-
-    # Log normalization
+    
+    # Log transform (add 1 to avoid log(0))
     df_out['user_activity_log'] = np.log1p(df_out['user_activity'])
     df_out['movie_pop_log'] = np.log1p(df_out['movie_pop'])
     df_out['movie_avg_rate_log'] = np.log1p(df_out['movie_avg_rate'])
-
+    
     return df_out
 
-print("Applying features to Train/Val/Test...")
 train = add_stat_features(train)
 val = add_stat_features(val)
 test = add_stat_features(test)
 
-print("Check Train samples:")
-print(train[['user_id_enc', 'user_activity_log', 'movie_pop_log', 'movie_avg_rate_log']].head())
-print(train[['user_id_enc', 'hist_movie_ids', 'hist_genre_ids']].head())
-
-print("\nCheck Test samples (Verification):")
-print(test[['user_activity_log', 'movie_pop_log']].isna().sum())
-
+# ============================================================================
+# 12. SAVE PROCESSED DATA
+# ============================================================================
+print("\nSaving processed data...")
 
 train.to_pickle("./data/cleaned/train_set.pkl")
 val.to_pickle("./data/cleaned/val_set.pkl")
 test.to_pickle("./data/cleaned/test_set.pkl")
+movies.to_pickle("./data/cleaned/item_set.pkl")
 
-import pickle
+# Save encoders for inference
 with open("./data/cleaned/encoders.pkl", "wb") as f:
     pickle.dump({
         'user_encoder': lbe_user, 
@@ -321,7 +354,41 @@ with open("./data/cleaned/encoders.pkl", "wb") as f:
         'gender_encoder': lbe_gender,
         'age_encoder': lbe_age,
         'occupation_encoder': lbe_occ,
-        'genre_map': padded_movie_genre_dict,
-        'genre_vocab_size': len(genre2int) + 1
+        'genre_map': movie_genre_dict_padded,
+        'genre_vocab_size': len(genre2int) + 1,  # +1 for padding (0)
+        'base_year': BASE_YEAR
     }, f)
+
+# ============================================================================
+# 13. VERIFICATION
+# ============================================================================
+print("\n" + "="*80)
+print("VERIFICATION")
+print("="*80)
+
+print("\nVocabulary sizes:")
+print(f"Users: {ratings['user_id_enc'].max()} (config expects 6060)")
+print(f"Movies: {ratings['movie_id_enc'].max()} (config expects 3500)")
+print(f"Genres: {len(genre2int) + 1} (config expects 25)")
+print(f"Gender: {users['gender_enc'].max()} (config expects 3)")
+print(f"Age: {users['age_enc'].max()} (config expects 9)")
+print(f"Occupation: {users['occupation_enc'].max()} (config expects 22)")
+print(f"Zip: {users['zip_enc'].max()} (config expects 685)")
+
+print("\nSample train data:")
+print(train[['user_id_enc', 'movie_id_enc', 'genre_ids', 'rating', 'label']].head())
+
+print("\nHistory sequences (first user):")
+sample = train[train['user_id_enc'] == 1].head(3)
+for idx, row in sample.iterrows():
+    print(f"\nRating #{idx}:")
+    print(f"  Movie: {row['movie_id_enc']}")
+    print(f"  History: {row['hist_movie_ids']}")
+    print(f"  Hard Negs: {row['hard_neg_ids'][:5]}...")
+
+print("\nMissing values check:")
+print(train[['user_activity_log', 'movie_pop_log', 'movie_avg_rate_log']].isna().sum())
+
+print("\nData saved successfully!")
+print("="*80)
 
