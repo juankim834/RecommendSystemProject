@@ -21,6 +21,7 @@ def main():
     config_path = 'config.yaml'
     train_data_path = './data/cleaned/train_set.pkl'
     val_data_path = './data/cleaned/val_set.pkl'
+    item_data_path = './data/cleaned/item_set.pkl'
     
     config = file_loader(config_path)
     
@@ -53,7 +54,7 @@ def main():
     print("Setting up item index dataloader...")
     item_loader = create_loader(
         config_path=config_path,
-        pickle_path=val_data_path,  # Use validation set items
+        pickle_path=item_data_path,
         tower_type='item_tower',
         batch_size=config['train']['batch_size'],
         shuffle=False,
