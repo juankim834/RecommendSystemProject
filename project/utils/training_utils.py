@@ -148,7 +148,12 @@ def validate(model, loader, item_loader, device, epoch, k_list=[10, 20],
             all_item_ids_list.append(ids)
             
         all_item_embs = torch.cat(all_item_embs_list, dim=0) # [Total_Items, Emb_Dim]
-        all_item_ids = torch.cat(all_item_ids_list, dim=0)   # [Total_Items, 1]
+        all_item_ids = torch.cat(all_item_ids_list, dim=0).view(-1)  # [Total_Items, 1]
+
+        # Pathc: Mask all history interaction
+        # max_id = all_item_ids.max().item()
+        # id_to_index_map = torch.full((max_id + 1,), -1, device=device, dtype=torch.long)
+        # id_to_index_map[all_item_ids] = torch.arange(len(all_item_ids), device=device)
     
     pbar = tqdm(loader, desc="Validating")
     
@@ -199,7 +204,7 @@ def validate(model, loader, item_loader, device, epoch, k_list=[10, 20],
                 
                 # Simple Hit Detection
                 # targets: [Batch, 1] -> [Batch, 1, 1]
-                hits = (pred_ids == targets.unsqueeze(1)).any(dim=1)
+                hits = (pred_ids == targets.view(-1, 1)).any(dim=1)
                 total_recall[k] += hits.float().sum().item()
             
             
