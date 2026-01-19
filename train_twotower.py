@@ -1,109 +1,196 @@
-import torch.optim as optim
-from tqdm import tqdm
 import torch
-from transformers import get_cosine_schedule_with_warmup
-from torch.utils.data import DataLoader
-from project.utils.DataLoader import RecommendationDataset
-from project.utils.training_utils import to_device, train_one_epoch, validate
-from project.utils.ItemDataLoader import ItemDataset
+import torch.nn as nn
+import torch.optim as optim
+from pathlib import Path
+
+from project.utils.DataLoader import create_loader
+from project.utils.CombineTwoTower import CombinedTwoTowerDataLoader
 from project.models.TwoTower.GenericTower import GenericTower
 from project.models.TwoTower.TwoTowerModel import TwoTowerModel
-from project.utils.config_utils import load_config
-import os
+from project.utils.training_utils import train_one_epoch, validate
+from project.utils.config_utils import file_loader
+from model_diagnostics import run_full_diagnostics
 
 
-CONFIG_PATH = "config.yaml"
-PKL_PATH_TRAIN = "./data/cleaned/train_set.pkl"
-PKL_PATH_VAL = "./data/cleaned/val_set.pkl"
-PKL_PATH_ITEM = "./data/cleaned/item_set.pkl"
-
-cfg = load_config(CONFIG_PATH)
-epochs = cfg.get("train", {}).get("epochs", 10)
-learning_rate = cfg.get("train", {}).get("learning_rate", 5e-4)
-batch_size = cfg.get("train", {}).get("batch_size", 1024)
-temperature = cfg.get("train", {}).get("temperature", 0.07)
-DEVICE = cfg.get("train", {}).get("device", "cuda")
-min_delta = cfg.get("train", {}).get("min_delta", 1e-4)
-save_standard = cfg.get("train", {}).get("save_standard", "loss")
-patience = cfg.get("train", {}).get("patience", 5)
-
-if torch.cuda.is_available() == False and DEVICE == "cuda":
-    raise RuntimeError("Cuda is not available")
-user_tower = GenericTower(cfg, "user_tower")
-item_tower = GenericTower(cfg, "item_tower")
-
-model = TwoTowerModel(user_tower, item_tower).to(DEVICE)
-
-train_dataset = RecommendationDataset(CONFIG_PATH, PKL_PATH_TRAIN)
-val_dataset = RecommendationDataset(CONFIG_PATH, PKL_PATH_VAL)
-
-train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=1, persistent_workers=True)
-val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=1, persistent_workers=True)
-
-item_dataset = ItemDataset(CONFIG_PATH, PKL_PATH_ITEM)
-item_loader = DataLoader(item_dataset, batch_size=1024, shuffle=False)
-
-optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-
-# total_step = len(train_loader) * epochs
-# warmup_step = int(total_step * 0.02)
-# scheduler = get_cosine_schedule_with_warmup(optimizer, num_training_steps=total_step, num_warmup_steps=warmup_step)
-
-temperature_scheduler = {
-
-}
-
-
-print(f"Start training on {DEVICE}...")
-if __name__ == '__main__':
-    best_val_loss = float('inf')
-    best_acc = {10:0, 20:0}
+def main():
+    """
+    Main training function for Option A: 
+    Single DataFrame with both user and item features in each row.
+    """
+    # Configuration
+    config_path = 'config.yaml'
+    train_data_path = './data/cleaned/train_set.pkl'
+    val_data_path = './data/cleaned/val_set.pkl'
+    
+    config = file_loader(config_path)
+    
+    # Device setup
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"Using device: {device}")
+    
+    # Setup dataloaders for TRAINING
+    print("Setting up training dataloader...")
+    train_loader = CombinedTwoTowerDataLoader(
+        config_path=config_path,
+        pickle_path=train_data_path,
+        batch_size=config['train']['batch_size'],
+        shuffle=True,
+        num_workers=1
+    )
+    
+    # Setup dataloaders for VALIDATION
+    print("Setting up validation dataloader...")
+    val_loader = CombinedTwoTowerDataLoader(
+        config_path=config_path,
+        pickle_path=val_data_path,
+        batch_size=config['train']['batch_size'],
+        shuffle=False,
+        num_workers=1
+    )
+    
+    # Setup ITEM INDEX dataloader (for computing Recall@K)
+    # This extracts only item features for building the item catalog
+    print("Setting up item index dataloader...")
+    item_loader = create_loader(
+        config_path=config_path,
+        pickle_path=val_data_path,  # Use validation set items
+        tower_type='item_tower',
+        batch_size=config['train']['batch_size'],
+        shuffle=False,
+        num_workers=1
+    )
+    
+    # Get feature mappings
+    mappings = train_loader.get_feature_mappings()
+    user_mapping = mappings['user']
+    item_mapping = mappings['item']
+    
+    print(f"\nFeature mappings:")
+    print(f"  User sparse features: {list(user_mapping['sparse'].keys())}")
+    print(f"  Item sparse features: {list(item_mapping['sparse'].keys())}")
+    
+    # Create model
+    print("\nCreating model...")
+    user_tower = GenericTower(config, 'user_tower')
+    item_tower = GenericTower(config, 'item_tower')
+    
+    model = TwoTowerModel(
+        user_tower=user_tower,
+        item_tower=item_tower,
+        user_feature_mapping=user_mapping,
+        item_feature_mapping=item_mapping
+    ).to(device)
+    
+    print(f"Model created with {sum(p.numel() for p in model.parameters()):,} parameters")
+    
+    # Optimizer and scheduler
+    optimizer = optim.Adam(model.parameters(), lr=config['train']['learning_rate'])
+    # scheduler = optim.lr_scheduler.CosineAnnealingLR(
+    #     optimizer, 
+    #     T_max=config['train']['epochs']
+    # )
+    
+    # Training parameters
+    num_epochs = config['train']['epochs']
+    temperature = config['train']['temperature']
+    patience = config['train'].get('patience', 8)
+    
+    best_recall = 0.0
     patience_counter = 0
-    save_dir = './project/models/TwoTower/'
-    os.makedirs(save_dir, exist_ok=True)
 
-    for epoch in range(epochs):
-
-        train_loss = train_one_epoch(model, train_loader, optimizer, DEVICE, scheduler = None, item_loader = item_loader, temperature=temperature)
-        val_loss, acc = validate(model, val_loader, item_loader, DEVICE, epoch, log_embeddings=True)
-        torch.cuda.empty_cache()
-        save_indicator = False
+    # run_full_diagnostics(
+    #     model=model,
+    #     train_loader=train_loader,
+    #     config=config,
+    #     device=device
+    # )
+    
+    # Training loop
+    print(f"\nStarting training for {num_epochs} epochs...")
+    print(f"Temperature: {temperature}, Patience: {patience}")
+    print(f"{'='*70}\n")
+    
+    for epoch in range(1, num_epochs + 1):
+        print(f"\n{'='*70}")
+        print(f"Epoch {epoch}/{num_epochs}")
+        print(f"{'='*70}")
         
-        if save_standard == "loss":
-            if val_loss < best_val_loss - min_delta:
-                save_indicator = True
-        if save_standard == "10K":
-            if acc[10] > best_acc[10] + min_delta:
-                save_indicator = True
-                best_acc = acc
-        if save_standard == "20K":
-            if acc[20] > best_acc[20] + min_delta:
-                save_indicator = True
-                best_acc = acc
-
-
-
-        print(f"    Epoch [{epoch+1}/{epochs}] - Train Loss: {train_loss:.4f} - Val Loss: {val_loss:.4f}")
-        for k, acccuracy in acc.items():
-            print(f"        Recall@{k} accuracy: {acccuracy:.4f}")
-
-        if save_indicator:
+        # TRAINING
+        avg_train_loss = train_one_epoch(
+            model=model,
+            loader=train_loader,
+            optimizer=optimizer,
+            device=device,
+            # scheduler=scheduler,
+            log_every_n_batches=100,
+            epoch=epoch,
+            temperature=temperature
+        )
+        
+        # VALIDATION
+        # Get the column index for movie_id_enc from the mapping
+        movie_id_col_idx = item_mapping['sparse'].get('movie_id_enc', 0)
+        
+        avg_val_loss, metrics = validate(
+            model=model,
+            loader=val_loader,
+            item_loader=item_loader,
+            device=device,
+            epoch=epoch,
+            k_list=[10, 20, 50],
+            item_id_feature='movie_id_enc',
+            item_id_type='sparse',
+            item_id_col_idx=movie_id_col_idx,
+            log_embeddings=True
+        )
+        
+        # Check for improvement
+        current_recall = metrics[10]  # Use Recall@10 as primary metric
+        
+        if current_recall > best_recall:
+            best_recall = current_recall
             patience_counter = 0
-            checkpoint = {
+            
+            # Save best model
+            save_path = Path('./checkpoints') / f'best_model_epoch_{epoch}.pt'
+            save_path.parent.mkdir(exist_ok=True, parents=True)
+            
+            torch.save({
                 'epoch': epoch,
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
-                'loss': val_loss,
-                'recall_k': acc
-            }
-            torch.save(checkpoint, os.path.join(save_dir, "best_model.pth"))
-            print(f"  Model improved. Model saved.")
+                # 'scheduler_state_dict': scheduler.state_dict(),
+                'train_loss': avg_train_loss,
+                'val_loss': avg_val_loss,
+                'metrics': metrics,
+                'user_mapping': user_mapping,
+                'item_mapping': item_mapping,
+                'config': config
+            }, save_path)
+            
+            print(f"\n New best model saved! Recall@10: {best_recall:.4f}")
         else:
             patience_counter += 1
-            print(f"  No improvement. Patience: {patience_counter}/{patience}")
+            print(f"\n No improvement. Patience: {patience_counter}/{patience}")
+            
+            if patience_counter >= patience:
+                print(f"\n Early stopping triggered after {epoch} epochs")
+                break
+        
+        # Step scheduler
+        # scheduler.step()
+        
+        # Log current learning rate
+        current_lr = optimizer.param_groups[0]['lr']
+        print(f"Current learning rate: {current_lr:.6f}")
+    
+    print(f"\n{'='*70}")
+    print(f"Training completed!")
+    print(f"Best Recall@10: {best_recall:.4f}")
+    print(f"{'='*70}")
+    
+    return model, best_recall
 
-        if patience_counter >= patience:
-            print("Early stopping triggered")
-            break
 
-    torch.save(model.state_dict(), os.path.join(save_dir, "final_full_model.pth"))
+if __name__ == '__main__':
+    model, best_recall = main()
