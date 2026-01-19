@@ -58,7 +58,6 @@ class GenericTower(nn.Module):
                 self.embeddings[name] = nn.Sequential(
                     # nn.BatchNorm1d(origin_dim),
                     nn.Linear(origin_dim, embedding_dim),
-                    nn.ReLU()
                 )
                 dense_total_dim = dense_total_dim + embedding_dim
         
