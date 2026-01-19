@@ -24,6 +24,8 @@ class GenericTower(nn.Module):
 
         # Initializing Sparse features
         self.sparse_features = tower_cfg.get("sparse_features", [])
+        self.dense_features = tower_cfg.get("dense_features", [])
+        self.seq_features = tower_cfg.get("sequence_features", [])
         sparse_total_dim = 0
         if self.sparse_features is not None:
             for feat in self.sparse_features:
@@ -38,32 +40,32 @@ class GenericTower(nn.Module):
                     padding_idx=padding_idx
                 )
 
+                nn.init.xavier_uniform_(self.embeddings[name].weight)
+
                 if 'pooling' in feat:
                     self.pooling_config[name] = feat['pooling']
 
                 sparse_total_dim = sparse_total_dim + embedding_dim
         
         # Initializing Dense features
-        dense_feature = tower_cfg.get('dense_features', [])
         dense_total_dim = 0
-        if dense_feature is not None:
-            for feat in dense_feature:
+        if self.dense_features is not None:
+            for feat in self.dense_features:
                 name = feat["name"]
                 origin_dim = feat["dim"]
                 embedding_dim = feat["embedding_dim"]
 
                 self.embeddings[name] = nn.Sequential(
-                    nn.BatchNorm1d(origin_dim),
+                    # nn.BatchNorm1d(origin_dim),
                     nn.Linear(origin_dim, embedding_dim),
                     nn.ReLU()
                 )
                 dense_total_dim = dense_total_dim + embedding_dim
         
         # Initializing Sequence features
-        sequence_feature = tower_cfg.get('sequence_features', [])
         seq_total_dim = 0
-        if sequence_feature is not None:
-            if len(sequence_feature) > 0:
+        if self.seq_features is not None:
+            if len(self.seq_features) > 0:
                 model_dim = tower_cfg.get("embedding_dim", 32)
                 transformer_cfg = tower_cfg.get("transformer_parameters", {})
                 max_seq_len = transformer_cfg.get("max_seq_len", 20)
@@ -75,7 +77,7 @@ class GenericTower(nn.Module):
                     raise ValueError(f"Embedding dim {model_dim} must be divisible by n_head {n_head}")
 
                 self.seq_encoder = SequenceEncoder(
-                    feature_config_list=sequence_feature,
+                    feature_config_list=self.seq_features,
                     model_dim=model_dim,
                     dim_feedforward=ffN_dim,
                     max_seq_len=max_seq_len,
@@ -89,6 +91,8 @@ class GenericTower(nn.Module):
 
         self.total_embed_dim = sparse_total_dim + dense_total_dim + seq_total_dim
 
+        self.feature_bn = nn.BatchNorm1d(self.total_embed_dim)
+
         self.mlp = MLP_Tower(
             input_dim=self.total_embed_dim, 
             hidden_dims=mlp_hidden_dims,
@@ -96,48 +100,124 @@ class GenericTower(nn.Module):
             dropout=dropout_cfg
         )
     
-    def forward(self, input_dict):
+    def forward(self, input_dict, feature_column_mapping = None):
         """
-        :param input_dict: Feature dictionary. 
-            Input example:{sparse_feature: {feature_id:torch.Tensor, ...}, dense_feature:{feature_id:torch.Tensor, ...}, seq_feature:{feature_id:torch.Tensor, ...}}
+
+        :param input_dict: Feature dictionary with batched matrices
+            Format: {
+                'sparse': torch.Tensor of shape (batch_size, n_sparse_features),
+                'dense': torch.Tensor of shape (batch_size, n_dense_features),
+                'sequence': {feature_id: torch.Tensor of shape (batch_size, seq_len)}
+            }
         """
-        # Sparse features
+        
         feature_embs = []
-        sparse_feature = input_dict.get('sparse_feature', None)
-        if sparse_feature is not None:
-            for feature_id, data in sparse_feature.items():
-                if feature_id in self.embeddings:
-                    emb = self.embeddings[feature_id](data)
-                    feat_cfg = next((f for f in self.sparse_features if f['name'] == feature_id), None)
-                    if feature_id in self.pooling_config and emb.dim() > 2:
-                        pooling_type = self.pooling_config[feature_id]
-                        if pooling_type == 'mean':
-                            emb = torch.mean(emb, dim=1)
-                        elif pooling_type == 'sum':
-                            emb = torch.sum(emb, dim=1)
+        # Sparse features
+        if self.sparse_features and 'sparse' in input_dict:
+            sparse_matrix = input_dict['sparse'] # Shape: (batch_size, n_sparse_features)
+            sequence_dict = input_dict.get('sequence', {})
+
+            col_idx = 0
+            for feat_cfg in self.sparse_features:
+                feature_id = feat_cfg["name"] # Shape: (batch_size,)
+                has_pooling = 'pooling' in feat_cfg
+                if has_pooling:
+                    if feature_id not in sequence_dict:
+                        print(f"Warning: Pooled feature {feature_id} missing from sequence dict")
+                        continue
+                    feature_data = sequence_dict[feature_id]
+                    pooling_type = self.pooling_config[feature_id]
+                    pooling_type = self.pooling_config[feature_id]
+
+                    # Ensure Sequence Dimension exists [Batch, Seq]
+                    if feature_data.dim() == 1:
+                        feature_data = feature_data.unsqueeze(1)
+
+                    emb = self.embeddings[feature_id](feature_data)
+                    # Apply pooling if configured
+                    if pooling_type == 'mean':
+                        emb = torch.mean(emb, dim=1) # Shape: (batch_size, embed_dim)
+                    elif pooling_type == 'sum':
+                        emb = torch.sum(emb, dim=1)
+                    elif pooling_type == 'max':
+                        emb = torch.max(emb, dim=1)[0]
+                    
                     feature_embs.append(emb)
-        # Dense features
-        dense_feature = input_dict.get('dense_feature', None)
-        if dense_feature is not None:
-            for feature_name, data in dense_feature.items():
-                if feature_name in self.embeddings:
-                    emb = self.embeddings[feature_name](data)
+                
+                else:
+                    # Single-value sparse feature (in sparse matrix)
+                    # Use mapping if provided, otherwise assume config order
+                    if sparse_matrix is None: continue
+
+                    if feature_column_mapping and 'sparse' in feature_column_mapping:
+                        col_idx = feature_column_mapping['sparse'].get(feature_id)
+                        if col_idx is None:
+                            raise ValueError(f"Feature '{feature_id}' not found in column mapping")
+                    else:
+                        # Fallback: use order in config (less safe!)
+                        col_idx = [f['name'] for f in self.sparse_features if 'pooling' not in f].index(feature_id)
+                    
+                    feature_col = sparse_matrix[:, col_idx]  # Shape: (batch_size,)
+
+                    # Embed entire column at once!
+                    if feature_id in self.embeddings:
+                        try:
+                            emb = self.embeddings[feature_id](feature_col)  # Shape: (batch_size, embed_dim)
+                            feature_embs.append(emb)
+                        except IndexError: # If out of index in CUDA, switch to run on cpu to debug
+                            name = feat_cfg.get("name", "Unknown")
+                            vocab_size = feat_cfg.get("vocab_size", "Unknown")
+                            print(f"Config item {name}")
+                            print(f"{feature_id} is out of index, and the col_idx {col_idx}")
+                            print(f"Config input of Vocab_size: {vocab_size}")
+                            print(f"Vocab_size input: {self.embeddings[feature_id].num_embeddings}")
+                            print(f"[DEBUG] feature_id = {feature_id}")
+                            print(f"[DEBUG] used col_idx = {col_idx}")
+                            print(f"[DEBUG] feature_col max = {feature_col.max().item()}")
+                            print(f"[DEBUG] feature_col min = {feature_col.min().item()}")
+                            print(f"[DEBUG] vocab_size = {self.embeddings[feature_id].num_embeddings}")
+                            raise
+        
+        if self.dense_features and 'dense' in input_dict:
+            dense_matrix = input_dict['dense']
+
+            col_idx = 0
+            for feat_cfg in self.dense_features:
+                feature_id = feat_cfg["name"]
+
+                # Extract this feature's column
+                if feature_column_mapping and 'dense' in feature_column_mapping:
+                    col_idx = feature_column_mapping['dense'].get(feature_id)
+                    if col_idx is None:
+                        raise ValueError(f"Dense feature '{feature_id}' not found in column mapping")
+                else:
+                    # Fallback: use order in config
+                    col_idx = [f['name'] for f in self.dense_features].index(feature_id)
+                
+                # Extract this feature's column
+                feature_col = dense_matrix[:, col_idx:col_idx+1] # Shape: (batch_size, 1)
+
+                # Process through linear layer
+                if feature_id in self.embeddings:
+                    if feature_col.dtype != torch.float32:
+                        feature_col = feature_col.float()
+                    emb = self.embeddings[feature_id](feature_col)
                     feature_embs.append(emb)
         
-        # Sequence features
-        seq_feature_dict = input_dict.get('seq_feature', None)
-        if self.seq_encoder is not None:
-            seq_emb = self.seq_encoder(seq_feature_dict)
-            feature_embs.append(seq_emb)
+        if self.seq_encoder is not None and 'sequence' in input_dict:
+            seq_feature_dict = input_dict['sequence']
+            if seq_feature_dict:
+                seq_emb = self.seq_encoder(seq_feature_dict)
+                feature_embs.append(seq_emb)
         
         if not feature_embs:
-            raise RuntimeError("Tower received an empty valid feature. Please check if the Input Dictionary and Config match")
+            raise RuntimeError("Tower received no valid features. Check if input_dict matches config")
         
         concat_emb = torch.cat(feature_embs, dim=1)
+        concat_emb = self.feature_bn(concat_emb)
         output = self.mlp(concat_emb)
-        return output
-    
 
+        return output
 
 
 

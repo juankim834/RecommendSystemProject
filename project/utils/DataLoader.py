@@ -1,308 +1,324 @@
+from typing import Any, Dict, List, Optional
 import torch
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, DataLoader as TorchDataLoader
 import pandas as pd
 import numpy as np
 from project.utils.config_utils import file_loader
 
 class RecommendationDataset(Dataset):
-    def __init__(self, config_path, pkl_path):
+
+    """
+    Vectorized dataset that processes entire feature columns at once
+    instead of row-by-row operations.
+    """
+
+    def __init__(self, config_path, pkl_path, tower_type):
         """
         :param config_path: file path of config
         :param pkl_path: file path of pkl
+        :param tower_type: String
         """
-        raw_cfg = file_loader(config_path)
-        cfg = raw_cfg.get("two_tower", {})
-        self.cfg = cfg
-        if len(cfg) == 0:
-            raise RuntimeError("Config loading failed, no items in config")
-        
-        self.hard_neg_cfg = raw_cfg.get("hard_negatives", {})
-        self.use_hard_negatives = self.hard_neg_cfg.get("enabled", False)
-        self.num_hard_negatives = self.hard_neg_cfg.get("num_negatives", 5)
-        
-        # New: Get mapping config for hard negatives
-        # Example: {"negative_field": "genre_id"} means the negative_ids correspond to genre_id
-        self.hard_neg_mapping = self.hard_neg_cfg.get("mapping", {})
-        # Example: "hard_negative_ids" - the column containing the list of negative IDs
-        self.hard_neg_column = self.hard_neg_cfg.get("negative_column", "hard_negative_ids")
-        
-        # Convert DataFrame to dict of NumPy arrays for faster access
-        df = pd.read_pickle(pkl_path)
-        self.data = {col: df[col].values for col in df.columns}
-        self.data_len = len(df)
-        
-        # Build reverse index for hard negative lookup
-        if self.use_hard_negatives and self.hard_neg_mapping:
-            self._build_negative_index(df)
-        
-        del df  # Free memory
-        
-        self.item_tower_cfg = self.cfg.get("item_tower", {})
-        
-        # Pre-cache feature lists to avoid repeated lookups
-        self._cache_feature_lists()
+        self.config = file_loader(config_path)
+        self.df = pd.read_pickle(pkl_path)
+        self.tower_type = tower_type
+        self.tower_config = self.config['two_tower'][tower_type]
 
-    def _build_negative_index(self, df):
+        # Parse feature metadata
+        self.feature_metadata = self._parse_feature_metadata()
+        # Build feature matrices (vectorized approach)
+        # This returns both matrices and the feature order used
+        self.feature_matrices, self.feature_column_mapping = self._build_feature_matrices()
+
+    def _parse_feature_metadata(self) -> Dict[str, List[tuple[str, List[str], int, int]]]:
         """
-        Build a reverse index to quickly find rows by target field value
-        
-        Example: if mapping is {"negative_field": "genre_id"}
-        Creates index: {genre_id_value: [row_idx1, row_idx2, ...]}
-        """
-        self.negative_index = {}
-        
-        for neg_field, target_field in self.hard_neg_mapping.items():
-            if target_field not in df.columns:
-                print(f"Warning: target field '{target_field}' not found in data")
-                continue
-            
-            # Build index: target_value -> list of row indices
-            field_index = {}
-            for idx, value in enumerate(df[target_field].values):
-                # Handle different value types (could be int, str, etc.)
-                key = value
-                if key not in field_index:
-                    field_index[key] = []
-                field_index[key].append(idx)
-            
-            self.negative_index[target_field] = field_index
-    
-    def _cache_feature_lists(self):
-        """Cache feature lists for each tower to avoid repeated parsing"""
-
-        self.tower_features = {}
-        for tower_name, tower_config in self.cfg.items():
-            self.tower_features[tower_name] = {
-                'sparse_features': self.feature_id_loader("sparse_features", tower_config),
-                'dense_features': self.feature_id_loader("dense_features", tower_config),
-                'sequence_features': self.feature_id_loader("sequence_features", tower_config),
-                'max_seq_len': tower_config.get("transformer_parameters", {}).get("max_seq_len", 20)
-            }
-
-    def __len__(self):
-        return self.data_len
-    
-    def __getitem__(self, idx):
-        row = {col: self.data[col][idx] for col in self.data.keys()}
-
-        data_dict = {}
-        for tower_name, tower_config in self.cfg.items():
-            features = self.tower_features[tower_name]
-
-            data_dict[tower_name] = self._get_tower_meta(
-                row,
-                features.get('sparse_features', []),
-                features.get('dense_features', []),
-                features.get('sequence_features', []),
-                features.get('max_seq_len', 20)
-            )
-        
-        if self.use_hard_negatives:
-            data_dict['hard_negatives'] = self._get_hard_negatives(row, idx)
-
-        return data_dict
-
-    
-    def _get_tower_meta(self, row, sparse_id_list, dense_id_list, seq_id_list, max_seq_len):
-
-        """
-        Returns dict in format:
-        {
-            'sparse_feature': {feature_id: torch.Tensor, ...},
-            'dense_feature': {feature_id: torch.Tensor, ...},
-            'seq_feature': {feature_id: torch.Tensor, ...}
-        }
-        """
-
-        data_dict = {}
-
-        # 1. Sparse Data
-        if sparse_id_list:
-            feat_data_dict = {}
-            for feat_name in sparse_id_list:
-                val = row.get(feat_name, 0)
-                feat_data_dict[feat_name] = torch.tensor(val, dtype=torch.long)
-            data_dict["sparse_feature"] = feat_data_dict
-        
-        # 2. Dense Data
-        if dense_id_list:
-            feat_data_dict = {}
-            for feat_name in dense_id_list:
-                val = row.get(feat_name, 0.0)
-                tensor_val = torch.tensor(val, dtype=torch.float32)
-                if tensor_val.ndim == 0:
-                    tensor_val = tensor_val.unsqueeze(0)
-                feat_data_dict[feat_name] = tensor_val
-            data_dict["dense_feature"] = feat_data_dict
-        
-        # 3. Sequence Data
-        if seq_id_list:
-            feat_data_dict = {}
-            for feat_name in seq_id_list:
-                raw_seq = row.get(feat_name, [])
-                seq = list(raw_seq)
-                if len(seq) > max_seq_len:
-                    seq = seq[-max_seq_len:]
-                else:
-                    seq = seq + [0] * (max_seq_len - len(seq))
-                feat_data_dict[feat_name] = torch.tensor(seq, dtype=torch.long)
-            data_dict["seq_feature"] = feat_data_dict
-            
-        return data_dict
-    
-    def _get_hard_negatives(self, row, idx):
-        """
-        Load hard negative samples using configurable mapping
-        
-        Example config:
-        {
-            "hard_negatives": {
-                "enabled": true,
-                "num_negatives": 5,
-                "negative_column": "hard_negative_ids",
-                "mapping": {
-                    "negative_field": "genre_id"  # neg IDs correspond to genre_id values
-                }
-            }
-        }
+        Parse feature configuration and return metadata for each feature type.
         
         Returns:
-            list of dicts, each with same structure as item tower output
+            Dict with keys 'sparse', 'dense', 'sequence', each containing:
+            List of tuples: (feature_id, column_names, start_idx, end_idx)
         """
-        hard_negatives = []
-        item_features = self.tower_features.get('item_tower', {})
+        metadata = {
+            'sparse': [],
+            'dense': [],
+            'sequence': []
+        }
         
-        # Get the negative ID list from the configured column
-        neg_ids = row.get(self.hard_neg_column, [])
+        current_idx = 0
         
-        if not isinstance(neg_ids, (list, np.ndarray)):
-            neg_ids = [neg_ids] if neg_ids else []
-        else:
-            neg_ids = list(neg_ids)
-        
-        # Limit to configured number
-        neg_ids = neg_ids[:self.num_hard_negatives]
-        
-        # Get target field from mapping
-        if not self.hard_neg_mapping:
-            print("Warning: hard_neg_mapping is empty, cannot retrieve hard negatives")
-            return self._get_empty_negatives(item_features)
-        
-        neg_field, target_field = list(self.hard_neg_mapping.items())[0]
-        
-        if target_field not in self.negative_index:
-            print(f"Warning: target field '{target_field}' not in negative index")
-            return self._get_empty_negatives(item_features)
-        
-        field_index = self.negative_index[target_field]
-        
-        # For each negative ID, find corresponding rows
-        for neg_id in neg_ids:
-            # Find rows where target_field == neg_id
-            candidate_indices = field_index.get(neg_id, [])
-            
-            if not candidate_indices:
-                # No match found, add empty negative
-                hard_negatives.append(self._get_empty_item_features(item_features))
-                continue
-            
-            # Take first candidate (or could randomize)
-            # Ensure we don't pick the current row itself
-            valid_candidates = [i for i in candidate_indices if i != idx]
-            
-            if not valid_candidates:
-                hard_negatives.append(self._get_empty_item_features(item_features))
-                continue
-            
-            neg_idx = valid_candidates[0]  # Or random.choice(valid_candidates)
-            
-            # Get row for this hard negative
-            neg_row = {col: self.data[col][neg_idx] for col in self.data.keys()}
-            
-            # Get item tower features for this negative
-            neg_features = self._get_tower_meta(
-                neg_row,
-                item_features.get('sparse_features', []),
-                item_features.get('dense_features', []),
-                item_features.get('sequence_features', []),
-                item_features.get('max_seq_len', 20)
-            )
-            hard_negatives.append(neg_features)
-        
-        # Pad with empty samples if we don't have enough hard negatives
-        while len(hard_negatives) < self.num_hard_negatives:
-            hard_negatives.append(self._get_empty_item_features(item_features))
-        
-        return hard_negatives
-    
-    def _get_empty_negatives(self, item_features):
-        """Return list of empty negatives"""
-        return [self._get_empty_item_features(item_features) 
-                for _ in range(self.num_hard_negatives)]
-    
-    def _get_empty_item_features(self, item_features):
-        """Create empty/zero features matching item tower structure"""
-        empty_dict = {}
-        
-        if item_features.get('sparse'):
-            empty_dict['sparse_feature'] = {
-                feat: torch.tensor(0, dtype=torch.long) 
-                for feat in item_features['sparse']
-            }
-        
-        if item_features.get('dense'):
-            empty_dict['dense_feature'] = {
-                feat: torch.tensor([0.0], dtype=torch.float32)
-                for feat in item_features['dense']
-            }
-        
-        if item_features.get('sequence'):
-            max_seq_len = item_features.get('max_seq_len', 20)
-            empty_dict['seq_feature'] = {
-                feat: torch.zeros(max_seq_len, dtype=torch.long)
-                for feat in item_features['sequence']
-            }
-        
-        return empty_dict
-
-
-    def feature_id_loader(self, feature_type, cfg):
-
-        """
-        Helper function autimatically load feature id from config.
-        
-        :param feature_type: String 
-        Specify the feature that is going to load
-        :param cfg: dict
-        Config dictionary load from the config file, it has to be the tower config dictionary, not all of the config dictionary.
-        """
-
-        feature_list = cfg.get(feature_type, [])
-        
-        if not feature_list:
-            return []
-        
-        feature_id_list = []
-        for feature in feature_list:
-            feature_id = feature.get("name")
-            feature_id_list.append(feature_id)
-        return feature_id_list
-        
-    def _pad_or_truncate(self, data_list, target_len, pad_val=0):
-        if not isinstance(data_list, list):
-            if hasattr(data_list, 'tolist'):
-                data_list = data_list.tolist()
-            else:
-                data_list = list(data_list)
+        # Parse sparse features
+        if 'sparse_features' in self.tower_config:
+            for feat in self.tower_config['sparse_features']:
+                feature_id = feat['name']
+                embed_dim = feat['embedding_dim']
                 
-        curr_len = len(data_list)
-        if curr_len < target_len:
-            return data_list + [pad_val] * (target_len - curr_len)
-        elif curr_len > target_len:
-            return data_list[:target_len]
-        return data_list
+                # Assume column name matches feature name (can be customized)
+                columns = [feature_id]
+                
+                metadata['sparse'].append((
+                    feature_id,
+                    columns,
+                    current_idx,
+                    current_idx + embed_dim
+                ))
+                current_idx += embed_dim
+        
+        # Parse dense features
+        if 'dense_features' in self.tower_config:
+            for feat in self.tower_config['dense_features']:
 
+                feature_id = feat['name']
+                output_dim = feat['embedding_dim']
+                
+                columns = [feature_id]
+                
+                metadata['dense'].append((
+                    feature_id,
+                    columns,
+                    current_idx,
+                    current_idx + output_dim
+                ))
+                current_idx += output_dim
+        
+        # Parse sequence features
+        if 'sequence_features' in self.tower_config:
+            for feat in self.tower_config['sequence_features']:
+                feature_id = feat['name']
+                embed_dim = feat['embedding_dim']
+                
+                columns = [feature_id]
+                
+                metadata['sequence'].append((
+                    feature_id,
+                    columns,
+                    current_idx,
+                    current_idx + embed_dim
+                ))
+                current_idx += embed_dim
+        
+        return metadata
+
+    def _build_feature_matrices(self):
+        """
+        Build numpy matrices for each feature type.
+        This is the vectorization step - entire columns at once!
+        
+        Returns:
+            Tuple of (matrices dict, column_mapping dict)
+        """
+        matrices = {}
+        column_mapping = {
+            'sparse': {},
+            'dense': {},
+            'sequence': {}
+        }
+        
+        # Sparse features
+        if self.feature_metadata['sparse']:
+            sparse_data = []
+            sparse_col_idx = 0
+            
+            for feature_id, columns, _, _ in self.feature_metadata['sparse']:
+                if columns[0] not in self.df.columns:
+                    raise ValueError(f"Feature '{feature_id}' column '{columns[0]}' not found in DataFrame. "
+                                f"Available columns: {list(self.df.columns)}")
+                
+                feat_cfg = next((f for f in self.tower_config.get('sparse_features', []) 
+                                if f['name'] == feature_id), None)
+                
+                if feat_cfg and 'pooling' in feat_cfg:
+                    if 'sequence' not in matrices:
+                        matrices['sequence'] = {}
+                    raw_data = self.df[columns[0]].tolist()
+                    # Check the first non-null element to see if it's already a list
+                    if len(raw_data) > 0:
+                        matrices['sequence'][feature_id] = raw_data
+                    else:
+                        raise AttributeError(f"No data was provided in the feature: {feature_id}")
+
+                    column_mapping['sequence'][feature_id] = feature_id
+                else:
+                    col_data = self.df[columns[0]].values
+                    sparse_data.append(col_data.reshape(-1, 1))
+                    column_mapping['sparse'][feature_id] = sparse_col_idx
+                    sparse_col_idx += 1
+            
+            if sparse_data:
+                matrices['sparse'] = np.hstack(sparse_data)
+        
+        # Dense features
+        if self.feature_metadata['dense']:
+            dense_data = []
+            dense_col_idx = 0
+            
+            for feature_id, columns, _, _ in self.feature_metadata['dense']:
+                if columns[0] not in self.df.columns:
+                    raise ValueError(f"Feature '{feature_id}' column '{columns[0]}' not found in DataFrame")
+                
+                col_data = self.df[columns[0]].values.astype(np.float32)
+                dense_data.append(col_data.reshape(-1, 1))
+                
+                column_mapping['dense'][feature_id] = dense_col_idx
+                dense_col_idx += 1
+            
+            matrices['dense'] = np.hstack(dense_data)
+        
+        # Sequence features
+        if self.feature_metadata['sequence']:
+            if 'sequence' not in matrices:
+                matrices['sequence'] = {}
+            
+            for feature_id, columns, _, _ in self.feature_metadata['sequence']:
+                if columns[0] not in self.df.columns:
+                    raise ValueError(f"Feature '{feature_id}' column '{columns[0]}' not found in DataFrame")
+                
+                matrices['sequence'][feature_id] = self.df[columns[0]].tolist()
+                # FIX: Track feature mapping
+                column_mapping['sequence'][feature_id] = feature_id
+        
+        return matrices, column_mapping
     
+    def get_feature_column_mapping(self) -> Dict[str, Dict[str, int]]:
+        """
+        Get the mapping of feature names to their column indices in matrices.
+        
+        Returns:
+            Dict mapping feature type to feature_name->column_index
+            Format: {
+                'sparse': {'user_id_enc': 0, 'gender_enc': 1, ...},
+                'dense': {'user_activity_log': 0, ...},
+                'sequence': {'hist_movie_ids': 'hist_movie_ids', ...}  # Keys for dict lookup
+            }
+        """
+        return self.feature_column_mapping
     
+    def __len__(self) -> int:
+        return len(self.df)
+    
+    def __getitem__(self, idx: int) -> Dict[str, Any]:
+        """
+        Get a single sample. Note: This still returns individual samples,
+        but the embedding will be done in batches in the model.
+        """
+        sample = {}
+        
+        # Sparse features
+        if 'sparse' in self.feature_matrices:
+            sample['sparse'] = self.feature_matrices['sparse'][idx]
+        
+        # Dense features
+        if 'dense' in self.feature_matrices:
+            sample['dense'] = self.feature_matrices['dense'][idx]
+        
+        # Sequence features
+        if 'sequence' in self.feature_matrices:
+            sample['sequence'] = {
+                feat_id: self.feature_matrices['sequence'][feat_id][idx]
+                for feat_id in self.feature_matrices['sequence']
+            }
+        
+        return sample
+    
+def collate_fn(batch: List[Dict]) -> Dict[str, torch.Tensor]:
+    """
+    Custom collate function to batch samples efficiently.
+    This is where the real vectorization happens!
+    """
+    batched = {}
+    # Batch sparse features - stack into single tensor
+    if "sparse" in batch[0]:
+        sparse_list = [sample['sparse'] for sample in batch]
+        batched["sparse"] = torch.tensor(np.stack(sparse_list), dtype=torch.long)
 
+    # Batch dense features - stack into single tensor
+    if "dense" in batch[0]:
+        dense_list = [sample["dense"] for sample in batch]
+        batched["dense"] = torch.tensor(np.stack(dense_list), dtype=torch.float32)
+    
+    # Pad sequences to max length in batch
+    if "sequence" in batch[0]:
+        batched["sequence"] = {}
+        for feat_id in batch[0]["sequence"]:
+            sequences = [sample["sequence"][feat_id] for sample in batch]
 
+            max_len = max(len(seq) if isinstance(seq, list) else seq.shape[0] for seq in sequences)
+            padded_seqs = []
+            for seq in sequences:
+                if isinstance(seq, list):
+                    seq = np.array(seq)
+                    # Pad if needed
+                    if len(seq) < max_len:
+                        if seq.ndim == 1:
+                            padded = np.pad(seq, (0, max_len -  len(seq)), constant_values=0)
+                        else:
+                            padded = np.pad(seq, ((0, max_len - len(seq)), (0, 0)), constant_values=0)
+                    else:
+                        padded = seq
+                    
+                    padded_seqs.append(padded)
+            batched['sequence'][feat_id] = torch.tensor(np.stack(padded_seqs), dtype=torch.long)
+    return batched
+
+def create_loader(config_path: str, 
+                  pickle_path: str,
+                  tower_type: str = 'user',
+                  batch_size: Optional[int] = None,
+                  shuffle: bool = True,
+                  num_workers: int = 0) -> TorchDataLoader:
+    """
+    Factory function to create a vectorized dataloader.
+    
+    Args:
+        config_path: Path to config.yaml
+        pickle_path: Path to pickle file with dataframe
+        tower_type: 'user' or 'item'
+        batch_size: Batch size (if None, read from config)
+        shuffle: Whether to shuffle data
+        num_workers: Number of worker processes
+    
+    Returns:
+        TorchDataLoader instance
+    """
+    dataset = RecommendationDataset(config_path, pickle_path, tower_type)
+
+    if batch_size is None:
+        config = file_loader(config_path)
+        batch_size = config["train"]["batch_size"]
+
+    dataloader = TorchDataLoader(
+        dataset, 
+        batch_size=batch_size,
+        shuffle=shuffle,
+        num_workers=num_workers,
+        collate_fn=collate_fn,
+        pin_memory=False
+    )
+    return dataloader
+
+# Example usage
+# if __name__ == "__main__":
+#     # Create dataloader
+#     dataloader = create_loader(
+#         config_path='config.yaml',
+#         pickle_path='data.pkl',
+#         tower_type='user',
+#         batch_size=512
+#     )
+    
+#     # Get feature mapping
+#     dataset = dataloader.dataset
+#     feature_mapping = dataset.get_feature_index_mapping()
+#     print("Feature Index Mapping:")
+#     for feat_id, idx_range in feature_mapping:
+#         print(f"  {feat_id}: columns {idx_range[0]} to {idx_range[1]}")
+    
+#     # Iterate through batches (vectorized!)
+#     for batch in dataloader:
+#         print("\nBatch shapes:")
+#         if 'sparse' in batch:
+#             print(f"  Sparse: {batch['sparse'].shape}")
+#         if 'dense' in batch:
+#             print(f"  Dense: {batch['dense'].shape}")
+#         if 'sequence' in batch:
+#             for feat_id, tensor in batch['sequence'].items():
+#                 print(f"  Sequence {feat_id}: {tensor.shape}")
+#         break    

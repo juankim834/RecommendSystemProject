@@ -4,7 +4,7 @@ import torch.nn.functional as F
 
 class MLP_Tower(nn.Module):
     """
-    MLP's General Structure: Embedding -> MLP -> Normalize
+    MLP's General Structure: MLP -> Normalize
     """
     def __init__(self, input_dim, hidden_dims, output_dim, dropout=0.1):
         
@@ -23,6 +23,16 @@ class MLP_Tower(nn.Module):
         layers.append(nn.Linear(curr_dim, output_dim))
 
         self.mlp = nn.Sequential(*layers)
+        self.apply(self._init_weights)
+    
+    def _init_weights(self, m):
+        if isinstance(m, nn.Linear):
+            nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.BatchNorm1d):
+            nn.init.constant_(m.weight, 1)
+            nn.init.constant_(m.bias, 0)
 
     def forward(self, x):
         out = self.mlp(x)

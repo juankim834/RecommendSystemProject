@@ -31,65 +31,91 @@ def generate_default_config(save_path='config/default_config.yaml'):
     """
     Generate a standard configuration template that adapts to GenericTower and TwoTowerModel.
     """
+
     default_config = {
-        "two_tower": {
-            # === User Tower Config ===
-            "user_tower": {
-                "mlp_hidden_dim": [256, 128],
-                "output_dims": 32,
-                "dropout": 0.1,
-                "embedding_dim": 32,
-                
-                # Transformer
-                "transformer_parameters": {
-                    "max_seq_len": 20,
-                    "n_head": 4,
-                    "n_layers": 2,
-                    "FFN_dim": 256,
-                    "dropout": 0.1
+            "two_tower": {
+                # === User Tower Config ===
+                "user_tower": {
+                    "mlp_hidden_dim": [256, 128],
+                    "output_dims": 64,
+                    "dropout": 0.1,
+                    "embedding_dim": 32,
+                    
+                    # Transformer
+                    "transformer_parameters": {
+                        "max_seq_len": 20,
+                        "n_head": 4,
+                        "n_layers": 3,
+                        "FFN_dim": 256,
+                        "dropout": 0.15
+                    },
+
+                    "sparse_features": [
+                        {"name": "user_id_enc", "vocab_size": 6060, "embedding_dim": 32},
+                        {"name": "gender_enc", "vocab_size": 3, "embedding_dim": 4},
+                        {"name": "age_enc", "vocab_size": 9, "embedding_dim": 8},
+                        {"name": "occupation_enc", "vocab_size": 22, "embedding_dim": 8},
+                        {"name": "zip_enc", "vocab_size": 685, "embedding_dim": 16},
+                        {"name": "year_enc", "vocab_size": 152, "embedding_dim": 8},
+                        {"name": "rating_month", "vocab_size": 13, "embedding_dim": 4},
+                        {"name": "rating_weekday", "vocab_size": 8, "embedding_dim": 4},
+                        {"name": "rating_hour", "vocab_size": 25, "embedding_dim": 4}
+                    ],
+                    "dense_features": [
+                        {"name": "user_activity_log", "dim": 1, "embedding_dim": 8}
+                    ],
+                    "sequence_features": [
+                        {"name": "hist_movie_ids", "vocab_size": 3500, "embedding_dim": 32, "padding_idx": 0},
+                        {"name": "hist_genre_ids", "vocab_size": 25, "embedding_dim": 8, "padding_idx": 0, "pooling": "mean"}
+                    ]
                 },
 
-                "sparse_features": [
-                    {"name": "user_id", "vocab_size": 10000, "embedding_dim": 64, "padding_index": 0},
-                    {"name": "gender", "vocab_size": 3, "embedding_dim": 64},
-                    {"name": "age_bucket", "vocab_size": 10, "embedding_dim": 64}
-                ],
-                "dense_features": [
-                    {"name": "age_norm", "dim": 1, "embedding_dim": 64}
-                ],
-                "sequence_features": [
-                    {"name": "click_history_seq", "vocab_size": 5000, "embedding_dim": 64, "padding_idx": 0}
-                ]
+                # === Item Tower Config ===
+                "item_tower": {
+                    "mlp_hidden_dim": [256, 128],
+                    "output_dims": 64,
+                    "dropout": 0.1,
+                    "embedding_dim": 32,
+                    
+                    # Transformer (Added based on your YAML)
+                    "transformer_parameters": {
+                        "max_seq_len": 3,
+                        "FFN_dim": 128,
+                        "n_head": 2,
+                        "n_layers": 2,
+                        "dropout": 0.1
+                    },
+
+                    "sparse_features": [
+                        {"name": "movie_id_enc", "vocab_size": 3500, "embedding_dim": 32}
+                    ],
+                    "dense_features": [
+                        {"name": "movie_pop_log", "dim": 1, "embedding_dim": 8},
+                        {"name": "movie_avg_rate_log", "dim": 1, "embedding_dim": 8}
+                    ],
+                    "sequence_features": [
+                        {"name": "genre_ids", "vocab_size": 25, "embedding_dim": 8, "padding_idx": 0}
+                    ]
+                }
             },
 
-            # === Item Tower Config ===
-            "item_tower": {
-                "mlp_hidden_dim": [256, 128],
-                "output_dims": 64,
-                "dropout": 0.1,
-                "embedding_dim": 64,
-
-
-                "sparse_features": [
-                    {"name": "item_id", "vocab_size": 5000, "embedding_dim": 64},
-                    {"name": "category_id", "vocab_size": 100, "embedding_dim": 64}
-                ],
-                "dense_features": [
-                    {"name": "price_norm", "dim": 1, "embedding_dim": 64}
-                ],
-                "sequence_features": []
+            # === Hard Negatives (Added based on your YAML) ===
+            "hard_negatives": {
+                "enabled": True,
+                "num_negatives": 5,
+                "field_name": "hard_neg_ids",
+                "additional_features": []
+            },
+            
+            # === Training parameters ===
+            "train": {
+                "batch_size": 768,
+                "epochs": 50,
+                "learning_rate": 0.005,
+                "device": "cuda",
+                "temperature": 0.1
             }
-        },
-        
-        # === Training parameters ===
-        "train": {
-            "batch_size": 1024,
-            "epochs": 10,
-            "learning_rate": 1e-3,
-            "device": "cuda",
-            "temperature": 0.1
         }
-    }
 
     save_config(default_config, save_path)
 

@@ -40,6 +40,10 @@ class SequenceEncoder(nn.Module):
         main_seq = input_dict[main_feat_name]
 
         padding_mask = (main_seq == padding_idx)
+        all_pad = padding_mask.all(dim=1)  # Identify rows where EVERYTHING is masked
+        if all_pad.any():
+            # Force the last token to be visible (False = Do not mask)
+            padding_mask[all_pad, -1] = False
 
         seq_emb = self.feature_embedder(input_dict)
 
@@ -56,11 +60,16 @@ class SequenceEncoder(nn.Module):
         :param seq_output: [B, L, D]
         :param padding_mask: [B, L]
         """
-        valid_lengths = (~padding_mask).long().sum(dim=1)
-        valid_lengths = torch.clamp(valid_lengths, min=1)
+        B, L, D = seq_output.shape
 
-        last_valid_idx = valid_lengths - 1
-        batch_indices = torch.arange(seq_output.size(0), device=seq_output.device)
+        # valid_positions: True means valid token
+        valid_positions = ~padding_mask  # [B, L]
 
-        return seq_output[batch_indices, last_valid_idx, :]
+        # For each row, find the last True value
+        last_valid_idx = valid_positions.long().sum(dim=1) - 1
+        last_valid_idx = torch.clamp(last_valid_idx, min=0)
+
+        batch_indices = torch.arange(B, device=seq_output.device)
+
+        return seq_output[batch_indices, last_valid_idx]
     
