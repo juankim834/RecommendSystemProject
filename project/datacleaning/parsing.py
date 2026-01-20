@@ -162,6 +162,7 @@ ratings['rating_month'] = ratings['timestamp_dt'].dt.month
 BASE_YEAR = 1900
 ratings['year_enc'] = (ratings['timestamp_dt'].dt.year - BASE_YEAR + 1).astype(int)
 ratings['release_year_enc'] = (ratings['release_year'].fillna(BASE_YEAR) - BASE_YEAR + 1).astype(int)
+movies['release_year_enc'] = (movies['release_year'].fillna(BASE_YEAR) - BASE_YEAR + 1).astype(int)
 
 # Sort by user and time for sequence generation
 ratings = ratings.sort_values(['user_id_enc', 'timestamp']).reset_index(drop=True)
