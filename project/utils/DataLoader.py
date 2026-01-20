@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 import torch
 from torch.utils.data import Dataset, DataLoader as TorchDataLoader
 import pandas as pd
@@ -29,7 +29,7 @@ class RecommendationDataset(Dataset):
         # This returns both matrices and the feature order used
         self.feature_matrices, self.feature_column_mapping = self._build_feature_matrices()
 
-    def _parse_feature_metadata(self) -> Dict[str, List[tuple[str, List[str], int, int]]]:
+    def _parse_feature_metadata(self) -> Dict[str, List[Tuple[str, List[str], int, int]]]:
         """
         Parse feature configuration and return metadata for each feature type.
         
@@ -47,9 +47,16 @@ class RecommendationDataset(Dataset):
         
         # Parse sparse features
         if 'sparse_features' in self.tower_config:
+            REQUIRED_SPARSE_KEYS = ['name', 'embedding_dim']
             for feat in self.tower_config['sparse_features']:
+                missing = [k for k in REQUIRED_SPARSE_KEYS if k not in feat]
+                if missing:
+                    raise ValueError(
+                        f"Sparse feature config missing keys {missing}: {feat}"
+                    )
                 feature_id = feat['name']
                 embed_dim = feat['embedding_dim']
+                
                 
                 # Assume column name matches feature name (can be customized)
                 columns = [feature_id]
@@ -64,7 +71,13 @@ class RecommendationDataset(Dataset):
         
         # Parse dense features
         if 'dense_features' in self.tower_config:
+            REQUIRED_DENSE_KEYS = ['name', 'embedding_dim']
             for feat in self.tower_config['dense_features']:
+                missing = [k for k in REQUIRED_DENSE_KEYS if k not in feat]
+                if missing:
+                    raise ValueError(
+                        f"Dense feature config missing keys {missing}: {feat}"
+                    )
 
                 feature_id = feat['name']
                 output_dim = feat['embedding_dim']
@@ -81,7 +94,14 @@ class RecommendationDataset(Dataset):
         
         # Parse sequence features
         if 'sequence_features' in self.tower_config:
+            REQUIRED_SEQ_KEYS = ['name', 'embedding_dim']
             for feat in self.tower_config['sequence_features']:
+                missing = [k for k in REQUIRED_SEQ_KEYS if k not in feat]
+                if missing:
+                    raise ValueError(
+                        f"Dequence feature config missing keys {missing}: {feat}"
+                    )
+
                 feature_id = feat['name']
                 embed_dim = feat['embedding_dim']
                 
