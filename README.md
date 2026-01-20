@@ -17,3 +17,17 @@ The project currently includes:
 - A flexible training pupeline with configurable optimizaiton and early stopping
 
 This repository is intended as a learning-oriented project rather than a production system, with a focus on clarity, extensibility, and experimentaion. 
+
+## Requirements
+
+This project is developed and tested under the following environment:
+
+- Python 3.11
+- PyTorch 2.6.1
+- NumPy
+- Pandas
+- PyYAML
+- tqdm
+
+The code is primarily intended for experimentation and learning purposes.  
+Environment compatibility beyond the versions listed above is not guaranteed.
