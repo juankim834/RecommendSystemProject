@@ -7,6 +7,7 @@ import torch
 from torch.utils.data import DataLoader as TorchDataLoader
 from typing import Optional
 from project.utils.DataLoader import RecommendationDataset, collate_fn
+import pandas as pd
 
 
 class CombinedTwoTowerDataLoader:
@@ -27,12 +28,15 @@ class CombinedTwoTowerDataLoader:
             num_workers: Number of worker processes
             hard_negatives_enabled: Whether hard negatives are in the data
         """
+
+        pkl_df = pd.read_pickle(pickle_path)
+
         # Create two datasets - one for user features, one for item features
         self.user_dataset = RecommendationDataset(
-            config_path, pickle_path, tower_type='user_tower'
+            config_path, pkl_df, tower_type='user_tower'
         )
         self.item_dataset = RecommendationDataset(
-            config_path, pickle_path, tower_type='item_tower'
+            config_path, pkl_df, tower_type='item_tower'
         )
         
         # Verify they have the same length
