@@ -2,12 +2,14 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from pathlib import Path
+import pandas as pd
 
 from project.utils.DataLoader import create_loader
 from project.utils.CombineTwoTower import CombinedTwoTowerDataLoader
+from project.utils.CombineTwoTower import create_combined_dataloader
 from project.models.TwoTower.GenericTower import GenericTower
 from project.models.TwoTower.TwoTowerModel import TwoTowerModel
-from project.utils.training_utils import train_one_epoch, validate
+from project.utils.training_utils import train_one_epoch, validate, build_user_history
 from project.utils.config_utils import file_loader
 from model_diagnostics import run_full_diagnostics
 
@@ -49,6 +51,10 @@ def main():
         num_workers=1
     )
     
+    # Set up user's history for computing recall@K
+    train = pd.read_pickle(train_data_path)
+
+    
     # Setup ITEM INDEX dataloader (for computing Recall@K)
     # This extracts only item features for building the item catalog
     print("Setting up item index dataloader...")
@@ -61,6 +67,20 @@ def main():
         num_workers=1
     )
     
+    val_metadata_loader = create_combined_dataloader(
+        config_path='metadata_config.yaml',  # Minimal config
+        pickle_path=val_data_path,  # Same pickle file
+        batch_size=config['train']['batch_size'],  # MUST match val_loader
+        shuffle=False
+    )
+
+    train = pd.read_pickle(train_data_path)
+    user_history = build_user_history(
+        train,
+        user_col='user_id_enc',
+        item_col='movie_id_enc'
+    )
+
     # Get feature mappings
     mappings = train_loader.get_feature_mappings()
     user_mapping = mappings['user']
@@ -136,13 +156,15 @@ def main():
             model=model,
             loader=val_loader,
             item_loader=item_loader,
+            meta_data_loader=val_metadata_loader,
             device=device,
             epoch=epoch,
             k_list=[10, 20, 50],
             item_id_feature='movie_id_enc',
             item_id_type='sparse',
             item_id_col_idx=movie_id_col_idx,
-            log_embeddings=True
+            log_embeddings=True, 
+            user_history=user_history
         )
         
         # Check for improvement
