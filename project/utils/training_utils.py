@@ -89,22 +89,43 @@ def extract_item_id(item_batch, feature_name = 'movie_id_enc', feature_type = 's
             # Assuming item ID is the first column (index 0)
             # Adjust this based on your actural feature ordering
             return sparse_matrix[:, item_id_col]
-        elif feature_type == 'dense':
-            dense_matrix = item_batch.get('dense')
-            if dense_matrix is not None:
-                return dense_matrix[:, 0]
-        
-        elif feature_type == 'sequence':
-            seq_dict = item_batch.get('sequence', {})
-            if feature_name in seq_dict:
-                return seq_dict[feature_name][:, 0]
-        raise ValueError(f"Could not extract item ID '{feature_name}' from batch")
+    elif feature_type == 'dense':
+        dense_matrix = item_batch.get('dense')
+        if dense_matrix is not None:
+            return dense_matrix[:, 0]
+    
+    elif feature_type == 'sequence':
+        seq_dict = item_batch.get('sequence', {})
+        if feature_name in seq_dict:
+            return seq_dict[feature_name][:, 0]
+    raise ValueError(f"Could not extract item ID '{feature_name}' from batch")
+
+def build_user_history(train_df, user_col='user_id_enc', item_col='movie_id_enc'):
+    """
+    Build user history from training data.
+    Since train/val/test are split chronologically, all train interactions
+    are guaranteed to be before validation interactions.
+    
+    Returns:
+        Dict mapping user_id -> set of item_ids
+    """
+    user_history = {}
+    
+    for user_id, item_id in zip(train_df[user_col], train_df[item_col]):
+        if user_id not in user_history:
+            user_history[user_id] = set()
+        user_history[user_id].add(item_id)
+    
+    return user_history
 
 def validate(model, loader, item_loader, device, epoch, k_list=[10, 20], 
              item_id_feature='movie_id_enc',
              item_id_type='sparse',
-             item_id_col_idx=0, 
-             log_embeddings=True):
+             item_id_col_idx=0,
+             meta_data_loader=None,
+             user_id_col_idx=None,
+             log_embeddings=True,
+             user_history=None):
     """
     Validation with new vectorized format.
     
@@ -124,6 +145,7 @@ def validate(model, loader, item_loader, device, epoch, k_list=[10, 20],
     total_loss = 0
     total_recall = {k: 0.0 for k in k_list}
     num_samples = 0
+
     print("Pre-computing all item embeddings for Validation...")
     all_item_embs_list = []
     all_item_ids_list = []
@@ -133,27 +155,27 @@ def validate(model, loader, item_loader, device, epoch, k_list=[10, 20],
             item_batch = to_device(item_batch, device)
             # Here, `item_batch` is a standard Tower input.
             item_emb = model.get_item_embeddings(item_batch) 
-            
             all_item_embs_list.append(item_emb)
             
             # Extract the ID for subsequent matching.
-            if item_id_type == 'sparse' and 'sparse' in item_batch:
-                ids = item_batch['sparse'][:, item_id_col_idx]
-            elif item_id_type == 'dense' and 'dense' in item_batch:
-                ids = item_batch['dense'][:, item_id_col_idx]
-            elif item_id_type == 'sequence' and 'sequence' in item_batch:
-                ids = item_batch['sequence'][item_id_feature][:, 0]
-            else:
-                raise ValueError(f"Cannot extract item IDs from batch with type'{item_id_type}'")
+            ids = extract_item_id(
+                item_batch,
+                feature_name='movie_id_enc',
+                feature_type='sparse',
+                item_id_col=0
+            )
             all_item_ids_list.append(ids)
             
         all_item_embs = torch.cat(all_item_embs_list, dim=0) # [Total_Items, Emb_Dim]
         all_item_ids = torch.cat(all_item_ids_list, dim=0).view(-1)  # [Total_Items, 1]
 
         # Pathc: Mask all history interaction
-        # max_id = all_item_ids.max().item()
-        # id_to_index_map = torch.full((max_id + 1,), -1, device=device, dtype=torch.long)
-        # id_to_index_map[all_item_ids] = torch.arange(len(all_item_ids), device=device)
+        max_id = all_item_ids.max().item()
+        id_to_index_map = torch.full((max_id + 1,), -1, device=device, dtype=torch.long)
+        id_to_index_map[all_item_ids] = torch.arange(len(all_item_ids), device=device)
+
+    if meta_data_loader is not None:
+        meta_data_iter = iter(meta_data_loader)
     
     pbar = tqdm(loader, desc="Validating")
     
@@ -170,6 +192,7 @@ def validate(model, loader, item_loader, device, epoch, k_list=[10, 20],
             # Assuming batch_data has both user and item features combined
             # You'll need to adapt this based on how your model structures the batch
             item_batch = batch_data.get('item_tower', {})
+            user_batch = batch_data.get('user_tower')
 
             if not item_batch:
                 raise ValueError("batch_data does not contain 'item_tower' key")
@@ -184,9 +207,7 @@ def validate(model, loader, item_loader, device, epoch, k_list=[10, 20],
                 raise ValueError(f"Cannot extract target item IDs from batch. "
                                f"item_batch keys: {item_batch.keys()}, "
                                f"looking for type: {item_id_type}")
-
             
-
             # Compute loss
             loss = model.compute_loss(
                 user_emb, 
@@ -197,6 +218,40 @@ def validate(model, loader, item_loader, device, epoch, k_list=[10, 20],
             total_loss += loss.item()
             # Recall Rate
             scores = torch.matmul(user_emb, all_item_embs.t())
+
+            if user_history is not None:
+                # Option 1: Use metadata_loader (if provided)
+                if meta_data_loader is not None:
+                    meta_data_batch = next(meta_data_iter)
+                    user_ids = meta_data_batch['user_tower']['sparse'][:, 0]
+                
+                # Option 2: Use user_id_col_idx (fallback)
+                elif user_id_col_idx is not None:
+                    user_batch = batch_data.get('user_tower', {})
+                    user_ids = user_batch['sparse'][:, user_id_col_idx]
+                
+                # Error if neither provided
+                else:
+                    raise ValueError("Either metadata_loader or user_id_col_idx required")
+                
+                # Mask each user's historical items
+                user_ids_cpu = user_ids.cpu().numpy()
+                for i, user_id_val in enumerate(user_ids_cpu):
+                    if user_id_val in user_history:
+                        history_items = list(user_history[user_id_val])
+
+                        valid_items = [item_id for item_id in history_items if item_id <= max_id]
+
+                        if valid_items:
+                            # Convert to tensor and get indices in one shot
+                            item_tensor = torch.tensor(valid_items, device=device)
+                            indices = id_to_index_map[item_tensor]
+
+                            valid_mask = indices >= 0
+                            if valid_mask.any():
+                                scores[i, indices[valid_mask]] = float('-inf')
+
+            # Compute Recall@K
             for k in k_list:
                 _, topk_indices = torch.topk(scores, k=k, dim=1)
                 # Retrieve Item ID by Index
