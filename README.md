@@ -14,9 +14,9 @@ The project currently includes:
 - Unified handling of sparse, dense, and sequential features
 - Optional Transformer-based sequence modeling for user behavior
 - Support for hard negative sampling during training
-- A flexible training pupeline with configurable optimizaiton and early stopping
+- A flexible training pipeline with configurable optimizaiton and early stopping
 
-This repository is intended as a learning-oriented project rather than a production system, with a focus on clarity, extensibility, and experimentaion. 
+This repository is intended as a learning-oriented project rather than a production system, with a focus on clarity, extensibility, and experimentaion.
 
 ## Requirements
 
