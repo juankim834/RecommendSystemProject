@@ -10,9 +10,9 @@ class GenericTower(nn.Module):
         super().__init__()
         # model_cfg: 2 side of towers
         # tower_cfg: only tower_name side tower
-        model_cfg = cfg.get('two_tower', {})
+        model_cfg = cfg.get('two_toswer', {})
         if (len(model_cfg.get(tower_name, {}))==0):
-            raise RuntimeError(f'TwoTower Model initializing failed, {tower_name} has no features')
+            raise ValueError(f'TwoTower Model initializing failed, {tower_name} has no features')
         
         tower_cfg = model_cfg.get(tower_name)
         mlp_hidden_dims = tower_cfg["mlp_hidden_dim"]
@@ -23,12 +23,20 @@ class GenericTower(nn.Module):
         self.pooling_config = {}
 
         # Initializing Sparse features
-        self.sparse_features = tower_cfg.get("sparse_features", [])
-        self.dense_features = tower_cfg.get("dense_features", [])
-        self.seq_features = tower_cfg.get("sequence_features", [])
+        self.sparse_features = tower_cfg.get("sparse_features", None)
+        self.dense_features = tower_cfg.get("dense_features", None)
+        self.seq_features = tower_cfg.get("sequence_features", None)
         sparse_total_dim = 0
         if self.sparse_features is not None:
             for feat in self.sparse_features:
+
+                REQUIRED_SPARSE_KEYS = ['name', 'vocab_size', 'embedding_dim']
+                for feat in self.tower_config['sparse_features']:
+                    missing = [k for k in REQUIRED_SPARSE_KEYS if k not in feat]
+                    if missing:
+                        raise ValueError(
+                            f"Sparse feature config missing keys {missing}: {feat}"
+                        )
                 name = feat["name"]
                 vocab_size = feat["vocab_size"]
                 embedding_dim = feat["embedding_dim"]
@@ -51,6 +59,15 @@ class GenericTower(nn.Module):
         dense_total_dim = 0
         if self.dense_features is not None:
             for feat in self.dense_features:
+
+                REQUIRED_DENSE_KEYS = ['name', 'dim', 'embedding_dim']
+                for feat in self.tower_config['sparse_features']:
+                    missing = [k for k in REQUIRED_DENSE_KEYS if k not in feat]
+                    if missing:
+                        raise ValueError(
+                            f"Dense feature config missing keys {missing}: {feat}, tower initializing failed"
+                        )
+
                 name = feat["name"]
                 origin_dim = feat["dim"]
                 embedding_dim = feat["embedding_dim"]
@@ -58,6 +75,7 @@ class GenericTower(nn.Module):
                 self.embeddings[name] = nn.Sequential(
                     # nn.BatchNorm1d(origin_dim),
                     nn.Linear(origin_dim, embedding_dim),
+                    # nn.ReLU()
                 )
                 dense_total_dim = dense_total_dim + embedding_dim
         
@@ -73,7 +91,7 @@ class GenericTower(nn.Module):
                 n_head = transformer_cfg.get("n_head", 4)
                 n_layers = transformer_cfg.get("n_layers", 1)
                 if model_dim % n_head != 0:
-                    raise ValueError(f"Embedding dim {model_dim} must be divisible by n_head {n_head}")
+                    raise ValueError(f"Transformer initializing failed, embedding dim {model_dim} must be divisible by n_head {n_head}")
 
                 self.seq_encoder = SequenceEncoder(
                     feature_config_list=self.seq_features,
