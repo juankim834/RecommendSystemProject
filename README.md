@@ -1,7 +1,5 @@
 # RecommendSystemProject
 
-This is for personal practice project
-
 ## What is in this system?
 
 This project is a config-driven recommendation system built for personal practice and exploration of modern recommender systems.
