@@ -12,19 +12,24 @@ class RecommendationDataset(Dataset):
     instead of row-by-row operations.
     """
 
-    def __init__(self, config_path, pkl_data, tower_type):
+    def __init__(self, config, pkl_data, tower_type):
         """
-        :param config_path: file path of config
-        :param pkl_path: file path of pkl
+        :param config: file path of config or dictionary
+        :param pkl_data: file path of pkl or dataframe
         :param tower_type: String
         """
-        self.config = file_loader(config_path)
+        if isinstance(config, str):
+            self.config = file_loader(config)
+        else:
+            self.config = config
         if isinstance(pkl_data, str):
             print(f"Loading data from {pkl_data} for {tower_type}...")
             self.df = pd.read_pickle(pkl_data)
         else:
             self.df = pkl_data
+        
         self.tower_type = tower_type
+
         self.tower_config = self.config['two_tower'][tower_type]
 
         # Parse feature metadata
