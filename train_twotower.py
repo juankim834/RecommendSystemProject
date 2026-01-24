@@ -74,11 +74,14 @@ def main():
         shuffle=False
     )
 
-    train = pd.read_pickle(train_data_path)
+    metadata_config = file_loader(config_path)
+    meta_item = metadata_config.get('item_tower').get('metadata_field')
+    meta_user = metadata_config.get('user_tower').get('metadata_field')
+
     user_history = build_user_history(
         train,
-        user_col='user_id_enc',
-        item_col='movie_id_enc'
+        user_col=meta_user,
+        item_col=meta_item
     )
 
     # Get feature mappings
