@@ -1,0 +1,18 @@
+# metadata_config.yaml
+two_tower:
+  user_tower:
+    sparse_features:
+      - name: user_id_enc
+        embedding_dim: 1  # Doesn't matter, we won't use embeddings
+    metadata_fields:
+      - user_id_enc
+  
+  item_tower:
+    sparse_features:
+      - name: movie_id_enc
+        embedding_dim: 1  # Doesn't matter
+    metadata_fields:
+      - movie_id_enc
+
+train:
+  batch_size: 512 # Must match your main config

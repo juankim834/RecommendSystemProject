@@ -1,24 +1,45 @@
 two_tower:
   user_tower:
-    # MLP (Multi-Layer Perceptron) structure after feature concatenation
     mlp_hidden_dim: [256, 128]
-    output_dims: 128 # Final embedding dimension for dot-product
-    dropout: 0.3 # Dropout rate to prevent overfitting
-    embedding_dim: 64 # Default embedding size if not specified per feature
-    
-    # Transformer Encoder settings (used for processing sequence features)
-    max_seq_len: 20 # Max length of user history sequence
+    output_dims: 128
+    dropout: 0.3
+    embedding_dim: 64
+    max_seq_len: 20
     transformer_parameters:
       max_seq_len: 20
-      n_head: 4 # Number of attention heads
-      n_layers: 2 # Number of transformer blocks
-      FFN_dim: 256 # Feed-forward network dimension
-      dropout: 0.15 # Internal transformer dropout
+      n_head: 4
+      n_layers: 2
+      FFN_dim: 256
+      dropout: 0.15
   
     sparse_features:
     - name: user_id_enc
       vocab_size: 6060
       embedding_dim: 64
+    - name: gender_enc
+      vocab_size: 3
+      embedding_dim: 4
+    - name: age_enc
+      vocab_size: 10
+      embedding_dim: 8
+    - name: occupation_enc
+      vocab_size: 25
+      embedding_dim: 8
+    - name: zip_enc
+      vocab_size: 700
+      embedding_dim: 16
+    - name: year_enc
+      vocab_size: 120
+      embedding_dim: 8
+    - name: rating_month
+      vocab_size: 13
+      embedding_dim: 4
+    - name: rating_weekday
+      vocab_size: 8
+      embedding_dim: 4
+    - name: rating_hour
+      vocab_size: 25
+      embedding_dim: 4
     dense_features:
     - name: user_activity_log
       dim: 1
