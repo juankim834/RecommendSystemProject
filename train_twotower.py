@@ -74,9 +74,9 @@ def main():
         shuffle=False
     )
 
-    metadata_config = file_loader(config_path)
-    meta_item = metadata_config.get('item_tower').get('metadata_field')
-    meta_user = metadata_config.get('user_tower').get('metadata_field')
+    metadata_config = file_loader('metadata_config.yaml').get('two_tower')
+    meta_item = metadata_config.get('item_tower').get('metadata_fields')
+    meta_user = metadata_config.get('user_tower').get('metadata_fields')
 
     user_history = build_user_history(
         train,
