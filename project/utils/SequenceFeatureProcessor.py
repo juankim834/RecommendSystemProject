@@ -16,14 +16,6 @@ class SequenceFeatureProcessor(nn.Module):
         self.embeddings = nn.ModuleDict()
         total_concat_dim = 0
         for feat_cfg in feature_config_list:
-
-            REQUIRED_SEQ_KEYS = ['name', 'vocab_size', 'embedding_dim']
-            for feat in self.tower_config['sparse_features']:
-                missing = [k for k in REQUIRED_SEQ_KEYS if k not in feat]
-                if missing:
-                    raise ValueError(
-                        f"Dense feature config missing keys {missing}: {feat}, tower initializing failed"
-                    )
             feat_name = feat_cfg['name']
             vocab_size = feat_cfg['vocab_size']
             emb_dim = feat_cfg['embedding_dim']
