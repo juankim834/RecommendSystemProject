@@ -10,7 +10,7 @@ class GenericTower(nn.Module):
         super().__init__()
         # model_cfg: 2 side of towers
         # tower_cfg: only tower_name side tower
-        model_cfg = cfg.get('two_toswer', {})
+        model_cfg = cfg.get('two_tower', {})
         if (len(model_cfg.get(tower_name, {}))==0):
             raise ValueError(f'TwoTower Model initializing failed, {tower_name} has no features')
         
@@ -31,8 +31,8 @@ class GenericTower(nn.Module):
             for feat in self.sparse_features:
 
                 REQUIRED_SPARSE_KEYS = ['name', 'vocab_size', 'embedding_dim']
-                for feat in self.tower_config['sparse_features']:
-                    missing = [k for k in REQUIRED_SPARSE_KEYS if k not in feat]
+                for field in self.sparse_features:
+                    missing = [k for k in REQUIRED_SPARSE_KEYS if k not in field]
                     if missing:
                         raise ValueError(
                             f"Sparse feature config missing keys {missing}: {feat}"
@@ -61,11 +61,11 @@ class GenericTower(nn.Module):
             for feat in self.dense_features:
 
                 REQUIRED_DENSE_KEYS = ['name', 'dim', 'embedding_dim']
-                for feat in self.tower_config['sparse_features']:
-                    missing = [k for k in REQUIRED_DENSE_KEYS if k not in feat]
+                for field in self.dense_features:
+                    missing = [k for k in REQUIRED_DENSE_KEYS if k not in field]
                     if missing:
                         raise ValueError(
-                            f"Dense feature config missing keys {missing}: {feat}, tower initializing failed"
+                            f"Dense feature config missing keys {missing}: {field}, tower initializing failed"
                         )
 
                 name = feat["name"]
@@ -103,8 +103,8 @@ class GenericTower(nn.Module):
                     dropout=trans_dropout
                 )
                 seq_total_dim = model_dim
-            else:
-                self.seq_encoder = None
+        else:
+            self.seq_encoder = None
 
         self.total_embed_dim = sparse_total_dim + dense_total_dim + seq_total_dim
 
