@@ -55,3 +55,5 @@ cp ml-1m_demo/metadata_config.yaml ./
  ```bash
  python train_twotower.py
  ```
+## 📚 Acknowledgments
+- **Dataset**: [MovieLens 1M](https://grouplens.org/datasets/movielens/1m/) provided by GroupLens Research.
