@@ -11,7 +11,7 @@ from project.models.TwoTower.GenericTower import GenericTower
 from project.models.TwoTower.TwoTowerModel import TwoTowerModel
 from project.utils.training_utils import train_one_epoch, validate, build_user_history
 from project.utils.config_utils import file_loader
-from model_diagnostics import run_full_diagnostics
+# from model_diagnostics import run_full_diagnostics
 
 
 def main():

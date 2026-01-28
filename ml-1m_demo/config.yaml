@@ -28,18 +28,18 @@ two_tower:
     - name: zip_enc
       vocab_size: 700
       embedding_dim: 16
-    - name: year_enc
-      vocab_size: 120
-      embedding_dim: 8
-    - name: rating_month
-      vocab_size: 13
-      embedding_dim: 4
-    - name: rating_weekday
-      vocab_size: 8
-      embedding_dim: 4
-    - name: rating_hour
-      vocab_size: 25
-      embedding_dim: 4
+    # - name: year_enc
+    #   vocab_size: 120
+    #   embedding_dim: 8
+    # - name: rating_month
+    #   vocab_size: 13
+    #   embedding_dim: 4
+    # - name: rating_weekday
+    #   vocab_size: 8
+    #   embedding_dim: 4
+    # - name: rating_hour
+    #   vocab_size: 25
+    #   embedding_dim: 4
     dense_features:
     - name: user_activity_log
       dim: 1
@@ -86,6 +86,12 @@ two_tower:
     # - name: movie_avg_rate_log
     #   dim: 1
     #   embedding_dim: 8
+    # transformer_parameters:
+    #   max_seq_len: 20
+    #   n_head: 4
+    #   n_layers: 2
+    #   FFN_dim: 256
+    #   dropout: 0.15
     
     
 
