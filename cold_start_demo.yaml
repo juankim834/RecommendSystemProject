@@ -1,0 +1,85 @@
+two_tower:
+  user_tower:
+    # MLP (Multi-Layer Perceptron) structure after feature concatenation
+    mlp_hidden_dim: [256, 128]
+    output_dims: 128 # Final embedding dimension for dot-product
+    dropout: 0.3 # Dropout rate to prevent overfitting
+    embedding_dim: 64 # Default embedding size if not specified per feature
+    
+    # Transformer Encoder settings (used for processing sequence features)
+    max_seq_len: 20 # Max length of user history sequence
+    transformer_parameters:
+      max_seq_len: 20
+      n_head: 4 # Number of attention heads
+      n_layers: 2 # Number of transformer blocks
+      FFN_dim: 256 # Feed-forward network dimension
+      dropout: 0.15 # Internal transformer dropout
+  
+    # sparse_features:
+    # - name: user_id_enc
+    #   vocab_size: 6060
+    #   embedding_dim: 64
+    # dense_features:
+    # - name: user_activity_log
+    #   dim: 1
+    #   embedding_dim: 8
+    sequence_features:
+    - name: hist_movie_ids
+      vocab_size: 3500
+      embedding_dim: 32
+      padding_idx: 0
+    - name: hist_genre_ids
+      vocab_size: 30
+      embedding_dim: 8
+      padding_idx: 0
+      pooling: mean
+  
+  item_tower:
+    mlp_hidden_dim: [256, 128]
+    output_dims: 128
+    dropout: 0.1
+    embedding_dim: 64
+    transformer_parameters:
+      max_seq_len: 20
+      n_head: 4
+      n_layers: 2
+      FFN_dim: 256
+      dropout: 0.0
+    sparse_features:
+    - name: movie_id_enc
+      vocab_size: 3500
+      embedding_dim: 32
+    - name: genre_ids
+      vocab_size: 30
+      embedding_dim: 8
+      padding_idx: 0
+      pooling: mean
+    - name: release_year_enc
+      vocab_size: 152
+      embedding_dim: 8
+    
+    # dense_features:
+    # - name: movie_pop_log
+    #   dim: 1
+    #   embedding_dim: 8
+    # - name: movie_avg_rate_log
+    #   dim: 1
+    #   embedding_dim: 8
+    
+    
+
+hard_negatives:
+  enabled: true
+  num_negatives: 10
+  negative_column: hard_negative  # Column containing [neg_id1, neg_id2, ...]
+  mapping:
+    negative_field: movie_id_enc
+
+train:
+  batch_size: 512
+  epochs: 50
+  learning_rate: 0.001
+  device: cuda
+  temperature: 0.1
+  save_standard: 10K
+  patience: 8
